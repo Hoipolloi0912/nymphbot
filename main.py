@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 from amq import gamemode
 from listApi import get_list
 from cache_autofill import get_anime_dict, get_artist_dict, get_song_dict
+import db
+import random
 
 load_dotenv()
-
 API_TOKEN = os.getenv("API_TOKEN")
 GUILD_IDS = [discord.Object(id=int(gid.strip())) for gid in os.getenv("GUILD_IDS", "").split(",")]
 HEADER = "https://naedist.animemusicquiz.com/"
@@ -34,6 +35,15 @@ def get_cursor():
     except psycopg.OperationalError:
         conn=psycopg.connect(DB_URL)
         return conn.cursor()
+    
+def get_conn():
+    global conn
+    if not conn:
+        conn=psycopg.connect(DB_URL)
+    try: return conn
+    except psycopg.OperationalError:
+        conn=psycopg.connect(DB_URL)
+        return conn
     
 def get_stream_duration(url: str) -> int:
     """Return duration of audio stream in seconds"""
@@ -61,13 +71,13 @@ async def on_ready():
         break
     print(f"{bot.user} at your service!")
 
-async def next(vc, gid):
+async def next(vc, gid, correct = True):
     if vc.is_playing():vc.stop()
 
     while True:
         path = None
         while True:
-            if not games[gid].next():
+            if not games[gid].next(correct):
                 print("no link")
                 return False
             path = games[gid].getlink()
@@ -99,10 +109,46 @@ async def terminate(interaction):
     if vc:
         await vc.disconnect()
     if interaction.guild.id in games:
+        games[interaction.guild.id].close()
         del games[interaction.guild.id]
 
+@amq_group.command(name="update", description="update user's anime list")
+@app_commands.describe(name="list username")
+@app_commands.choices(website=[app_commands.Choice(name="anilist",value="anilist"),
+                               app_commands.Choice(name="myanimelist",value="mal")])
+async def user_update(interaction: discord.Interaction,
+                      name: str,
+                      website: str,
+                      watching: bool = True,
+                      completed: bool = True,
+                      planning: bool = False,
+                      paused: bool = False,
+                      dropped: bool = False):
+    anime_ids = get_list[website](name,[watching,completed,planning,paused,dropped])
+    song_ids = db.get_song_ids_from_anime_ids(website, anime_ids)
+    await interaction.response.send_message(f"updating list to {len(song_ids)} song(s)", ephemeral=True)
+
+    db.upsert_user(interaction.user.id)
+    db.deactivate_old_songs(interaction.user.id, song_ids)
+    current_round = db.get_current_round(interaction.user.id)
+    db.upsert_user_song_list(interaction.user.id, song_ids, current_round)
+
+    await interaction.followup.send(f"update sucessful.", ephemeral=True)
+
+@amq_group.command(name="practice", description="training mode")
+async def amq_practice(interaction:discord.Interaction):
+    if not db.list_check(interaction.user.id):
+        await interaction.response.send_message("No active songs found. Run `/update` to import your list first.",ephemeral=True)
+        return
+    vc = await _amq(interaction)
+    if not vc:return
+    await interaction.response.send_message(f"starting practice mode")
+
+    games[interaction.guild.id] = gamemode["train"](interaction.user.id)
+    await next(vc,interaction.guild.id)
+
 @amq_group.command(name="anime-list", description="play songs from your anime list")
-@app_commands.describe(name="list username. separate multiple entries with comma",
+@app_commands.describe(name="list username",
                        num ="how many rounds",
                        mode = "guess the anime name or song/artist")
 @app_commands.choices(website=[app_commands.Choice(name="anilist",value="anilist"),
@@ -123,21 +169,19 @@ async def amq_animelist(interaction: discord.Interaction,
     if not vc:return
 
     await interaction.response.send_message(f"starting game of [{name}]. guess the {mode}")
-    
-    names = [n.strip() for n in name.split(",") if n.strip()]
-    players = len(names)
-    query,params = _query_with_list_name(names,website,num,[watching,completed,planning,paused,dropped])
 
-    with get_cursor() as curr:
-        curr.execute(query,params)
-        song_ids = curr.fetchall()
-        if song_ids:
-            await interaction.followup.send(f"loaded {len(song_ids)} songs")
-            games[interaction.guild.id] = gamemode[mode](song_ids,curr,players)
-            await next(vc,interaction.guild.id)
-        else:
-            await interaction.followup.send("no songs")
-            await terminate(interaction)
+    anime_ids = get_list[website](name,[watching,completed,planning,paused,dropped])
+    song_ids = db.get_song_ids_from_anime_ids(website,anime_ids)
+    if len(song_ids) <= num: random.shuffle(song_ids)
+    else: song_ids = random.sample(song_ids, k=num)
+
+    if song_ids:
+        await interaction.followup.send(f"loaded {len(song_ids)} songs")
+        games[interaction.guild.id] = gamemode[mode](song_ids)
+        await next(vc,interaction.guild.id)
+    else:
+        await interaction.followup.send("no songs")
+        await terminate(interaction)
 
 async def anime_autocomplete(interaction, current: str):
     suggestions = []
@@ -165,17 +209,18 @@ async def amq_animeid(interaction: discord.Interaction,
     if not vc:return
 
     await interaction.response.send_message(f"starting game of [{anime_dict[str(name)][1] or anime_dict[str(name)][0]}]. guess the songartist")
-    params = (name,num)
-    with get_cursor() as curr:
-        curr.execute(query_with_anime,params)
-        song_ids = curr.fetchall()
-        if song_ids:
-            await interaction.followup.send(f"loaded {len(song_ids)} songs")
-            games[interaction.guild.id] = gamemode["sa"](song_ids,curr,1,False)
-            await next(vc,interaction.guild.id)
-        else:
-            await interaction.followup.send("no songs")
-            await terminate(interaction)
+
+    song_ids = db.get_song_ids_from_anime_ids("ann",[name,])
+    if len(song_ids) <= num: random.shuffle(song_ids)
+    else: song_ids = random.sample(song_ids, k=num)
+
+    if song_ids:
+        await interaction.followup.send(f"loaded {len(song_ids)} songs")
+        games[interaction.guild.id] = gamemode["sa"](song_ids)
+        await next(vc,interaction.guild.id)
+    else:
+        await interaction.followup.send("no songs")
+        await terminate(interaction)
 
 async def artist_autocomplete(interaction, current: str):
     suggestions = []
@@ -197,19 +242,19 @@ async def amq_animeid(interaction: discord.Interaction,
                          num: app_commands.Range[int, 1, 999] =20):
     vc = await _amq(interaction)
     if not vc:return
-
     await interaction.response.send_message(f"starting game of [{artist_dict[str(name)]}]. guess the song name")
-    params = ([name],num)
-    with get_cursor() as curr:
-        curr.execute(query_with_artist,params)
-        song_ids = curr.fetchall()
-        if song_ids:
-            await interaction.followup.send(f"loaded {len(song_ids)} songs")
-            games[interaction.guild.id] = gamemode["sa"](song_ids,curr,1,True)
-            await next(vc,interaction.guild.id)
-        else:
-            await interaction.followup.send("no songs")
-            await terminate(interaction)
+
+    song_ids = db.get_song_ids_from_artist_id(name,num)
+    if len(song_ids) <= num: random.shuffle(song_ids)
+    else: song_ids = random.sample(song_ids, k=num)
+
+    if song_ids:
+        await interaction.followup.send(f"loaded {len(song_ids)} songs")
+        games[interaction.guild.id] = gamemode["sa"](song_ids,skip_a=True)
+        await next(vc,interaction.guild.id)
+    else:
+        await interaction.followup.send("no songs")
+        await terminate(interaction)
 
 @amq_group.command(name="join-list", description="join the current game with your anime list")
 @app_commands.describe(name="list username. separate multiple entries with comma")
@@ -234,71 +279,19 @@ async def amq_joinlist(interaction: discord.Interaction,
     
     game = games[interaction.guild.id]
     num = int(len(game.songs) / game.players)
-    names = [n.strip() for n in name.split(",") if n.strip()]
-    query,params = _query_with_list_name(names,website,num,[watching,completed,planning,paused,dropped])
 
-    with get_cursor() as curr:
-        curr.execute(query,params)
-        song_ids = curr.fetchall()
-        if song_ids:
-            await interaction.followup.send(f"loaded {len(song_ids)} songs")
-            game.init_data(curr,song_ids)
-            game.players +=1
-        else:
-            await interaction.followup.send("no songs")
-            await terminate(interaction)
+    anime_ids = get_list[website](name,[watching,completed,planning,paused,dropped])
+    song_ids = db.get_song_ids_from_anime_ids(website,[anime_ids,])
+    if len(song_ids) <= num: random.shuffle(song_ids)
+    else: song_ids = random.sample(song_ids, k=num)
 
-@amq_group.command(name="join-anime-name", description="join the current game with songs from an anime")
-@app_commands.describe(name="anime's name")
-@app_commands.autocomplete(name=anime_autocomplete)
-async def amq_animejoin(interaction: discord.Interaction,name: int,):
-    if interaction.guild.id not in games:
-        await interaction.response.send_message("no game in progress", ephemeral=True)
-        return
-    if not interaction.user.voice:
-        await interaction.response.send_message("join a voice channel", ephemeral=True)
-        return
-
-    await interaction.response.send_message(f"adding list [{anime_dict[str(name)][1] or anime_dict[str(name)][0]}]")
-    game = games[interaction.guild.id]
-    num = int(len(game.songs) / game.players)
-    params = (name,num)
-    with get_cursor() as curr:
-        curr.execute(query_with_anime,params)
-        song_ids = curr.fetchall()
-        if song_ids:
-            await interaction.followup.send(f"loaded {len(song_ids)} songs")
-            game.init_data(curr,song_ids)
-            game.players+=1
-        else:
-            await interaction.followup.send("no songs")
-            await terminate(interaction)
-
-@amq_group.command(name="join-artist-name", description="join the current game with songs of an artist")
-@app_commands.describe(name="artist's name")
-@app_commands.autocomplete(name=artist_autocomplete)
-async def amq_artistjoin(interaction: discord.Interaction,name: int,):
-    if interaction.guild.id not in games:
-        await interaction.response.send_message("no game in progress", ephemeral=True)
-        return
-    if not interaction.user.voice:
-        await interaction.response.send_message("join a voice channel", ephemeral=True)
-        return
-
-    await interaction.response.send_message(f"adding list [{artist_dict[str(name)]}]")
-    game = games[interaction.guild.id]
-    num = int(len(game.songs) / game.players)
-    params = ([name],num)
-    with get_cursor() as curr:
-        curr.execute(query_with_artist,params)
-        song_ids = curr.fetchall()
-        if song_ids:
-            await interaction.followup.send(f"loaded {len(song_ids)} songs")
-            game.init_data(curr,song_ids)
-            game.players+=1
-        else:
-            await interaction.followup.send("no songs")
-            await terminate(interaction)
+    if song_ids:
+        await interaction.followup.send(f"loaded {len(song_ids)} songs")
+        game.init_data(song_ids)
+        game.players +=1
+    else:
+        await interaction.followup.send("no songs")
+        await terminate(interaction)
 
 async def _amq(interaction: discord.Interaction):
     lock = guild_locks.setdefault(interaction.guild.id, asyncio.Lock())
@@ -331,21 +324,7 @@ async def song_autocomplete(interaction, current: str):
 @app_commands.describe(name="song name")
 @app_commands.autocomplete(name=song_autocomplete)
 async def amq_splitinfo(interaction: discord.Interaction,name: int):
-    cur = get_cursor()
-    cur.execute("""
-        select artist_id from song where amq_song_id = %s
-                """,(name,))
-    name = cur.fetchone()[0]
-    cur.execute("""
-        WITH RECURSIVE artist_tree AS (
-            SELECT * FROM artist WHERE id = ANY(%s)
-            UNION
-            SELECT a.* FROM artist a
-            JOIN artist_tree at ON a.id = ANY(at.member_id)
-        )
-        SELECT * FROM artist_tree;
-    """, ([name],))
-    results = cur.fetchall()
+    name, results = db.fetch_artist_tree_for_song(name)
     data_map = {id: (name, alt_ids or [], member_ids or []) for id, name, alt_ids, member_ids in results}
     lines = []
     stack = [(name, 0)]
@@ -371,71 +350,6 @@ async def amq_help(interaction):
             lines.append(f"`!{cmd.name}`   {cmd.help or 'No description'}")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-def _query_with_list_name(names,website,num,flags):
-    ids = set()
-    for name in names:
-        ids.update(get_list[website](name,flags))
-    ids = list(ids)
-    placeholders = ','.join(['%s'] * len(ids))
-    query = f"""
-    select * from (
-        select distinct on (a.amq_song_id) a.ann_song_id 
-        from anison a 
-        join anime b on a.anime_id = b.ann_id
-        join song c on a.amq_song_id = c.amq_song_id
-        where b.{website}_id in ({placeholders}) and a.link IS NOT NULL and c.dub IS FALSE and c.rebroad IS FALSE
-        order by a.amq_song_id, random()
-    )as sub
-    order by random()
-    limit %s;
-    """
-    params = ids + [num]
-    return query,params
-
-query_with_anime = f"""
-    select * from (
-        select distinct on (a.amq_song_id) a.ann_song_id 
-        from anison a 
-        join anime b on a.anime_id = b.ann_id
-        join song c on a.amq_song_id = c.amq_song_id
-        where b.ann_id = %s and a.link IS NOT NULL and c.dub IS FALSE and c.rebroad IS FALSE
-        order by a.amq_song_id, random()
-    )as sub
-    order by random()
-    limit %s;
-    """
-
-query_with_artist = f"""
-    WITH RECURSIVE containing_groups AS (
-    -- Base: input artist ID(s)
-    SELECT id, name, member_id
-    FROM artist
-    WHERE id = ANY(%s)
-
-    UNION
-
-    -- Recursively find all groups that contain them
-    SELECT a.id, a.name, a.member_id
-    FROM artist a
-    JOIN containing_groups cg ON cg.id = ANY(a.member_id)
-    ),
-    distinct_songs AS (
-    SELECT DISTINCT ON (a.amq_song_id) a.ann_song_id 
-    FROM anison a
-    JOIN anime b ON a.anime_id = b.ann_id
-    JOIN song c ON a.amq_song_id = c.amq_song_id
-    WHERE c.artist_id IN (SELECT id FROM containing_groups)
-        AND a.link IS NOT NULL
-        AND c.dub IS FALSE
-        AND c.rebroad IS FALSE
-    ORDER BY a.amq_song_id, random()
-    )
-    SELECT *
-    FROM distinct_songs
-    ORDER BY random()
-    LIMIT %s;
-    """
-
 @bot.command(help="skip current song")
 async def s(ctx):
     lock = guild_locks.setdefault(ctx.guild.id, asyncio.Lock())
@@ -445,7 +359,7 @@ async def s(ctx):
         vc = get(bot.voice_clients, guild__id=ctx.guild.id)
         if not(ctx.guild.id not in games or not vc):
             await ctx.send(f"{games[ctx.guild.id].count}: {games[ctx.guild.id].get_ans()}")
-            if not await next(vc, ctx.guild.id):
+            if not await next(vc, ctx.guild.id, False):
                 await ctx.send(f"{games[ctx.guild.id].score}/{games[ctx.guild.id].count}")
                 print(f"{games[ctx.guild.id].error} dead links")
                 await terminate(ctx)
@@ -490,4 +404,5 @@ async def on_command_error(ctx, error):
         raise error
 
 if __name__ == "__main__":
+    load_dotenv()
     bot.run(API_TOKEN)

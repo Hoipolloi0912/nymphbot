@@ -1,5 +1,6 @@
 from difflib import SequenceMatcher as sm
-import random,re
+import re
+import db
 
 def clean(s):
     return re.sub(r'[^\x00-\x7F]+', '', s.replace(" ", ""))
@@ -44,21 +45,21 @@ class Round:
         self.guessed = [False,False]
 
 class Game:
-    def __init__(self, song_ids, cur, players, skip_a = False):
+    def __init__(self, song_ids, skip_a = False):
         self.skip_a = skip_a
-        self.players = players
+        self.players = 1
         self.count = 0
         self.score = 0
         self.error = 0
         self.songs = []
         self.current = None
         self.alt_names = {}
-        self.init_data(cur,song_ids)
+        self.init_data(song_ids)
 
     def getlink(self):
         return self.current.link if self.current else None
     
-    def next(self):
+    def next(self,correct):
         try:
             row = self.songs.pop()
             self.current = self.make_round(row)
@@ -71,45 +72,25 @@ class Game:
     def get_ans(self):
         cur = self.current
         return f"[{cur.id}] {cur.sn} by {cur.a} from {cur.jp or cur.en}"
+    
+    def close(self):
+        pass
+
+    def init_data(self,song_ids):
+        pass
 
 class GameAnime(Game):
-    def init_data(self,cur,song_ids):
-        song_ids = [x[0] for x in song_ids]
-        placeholders = ','.join(['%s'] * len(song_ids))
-
-        cur.execute(f"""
-            SELECT a.amq_song_id, a.link, d.name_en, d.name_ja, b.name, c.name
-            FROM anison a
-            JOIN song b ON a.amq_song_id = b.amq_song_id
-            JOIN artist c ON b.artist_id = c.id
-            JOIN anime d ON a.anime_id = d.ann_id
-            WHERE a.ann_song_id IN ({placeholders})
-            ORDER BY RANDOM();
-        """, song_ids)
-        self.songs += cur.fetchall()
-
-        cur.execute(f"""
-            SELECT b.amq_song_id, a.name_en, a.name_ja
-            FROM anime a
-            JOIN anison b ON b.anime_id = a.ann_id
-            WHERE b.amq_song_id IN (
-                SELECT b2.amq_song_id
-                FROM anison b2
-                WHERE b2.ann_song_id IN ({placeholders})
-            )
-            AND b.ann_song_id NOT IN ({placeholders});
-        """, song_ids * 2)
-
-        rows = cur.fetchall()
+    def init_data(self,song_ids):
+        songs = db.fetch_from_ann_song_id(song_ids)
+        self.songs += songs
+        rows = db.fetch_alt_anime_names([x[0] for x in songs])
         for id, name_en, name_ja in rows:
             for name in (name_en, name_ja):
                 if name:
                     self.alt_names.setdefault(id, set()).add(name)
-        
-        random.shuffle(self.songs)
 
     def make_round(self, row):
-        return Round(*row, list(self.alt_names.get(row[0], [])))
+        return Round(*row[:6], list(self.alt_names.get(row[0], [])))
     
     def check(self, a):
         a = clean(a).lower()
@@ -123,44 +104,18 @@ class GameAnime(Game):
         return correct
 
 class GameSA(Game):
-    def init_data(self,cur,song_ids):
-        song_ids = [x[0] for x in song_ids]
-        placeholders = ','.join(['%s'] * len(song_ids))
-        cur.execute(f"""
-            SELECT a.amq_song_id, a.link, d.name_en, d.name_ja, b.name, c.name, c.id
-            FROM anison a
-            JOIN song b ON a.amq_song_id = b.amq_song_id
-            JOIN artist c ON b.artist_id = c.id
-            JOIN anime d ON a.anime_id = d.ann_id
-            WHERE a.ann_song_id IN ({placeholders})
-            ORDER BY RANDOM();
-        """, song_ids)
-        songs = cur.fetchall()
+    def init_data(self, ann_ids):
+        songs = db.fetch_from_ann_song_id(ann_ids)
         self.songs += songs
 
         artist_ids = [song[6] for song in songs]
-        cur.execute("""
-            WITH RECURSIVE artist_tree AS (
-                SELECT * FROM artist WHERE id = ANY(%s)
-                UNION
-                SELECT a.* FROM artist a
-                JOIN artist_tree at ON a.id = ANY(at.member_id)
-            )
-            SELECT * FROM artist_tree;
-        """, (artist_ids,))
-        results = cur.fetchall()
-        self.alt_names |= {id: [name, alts, members] for id, name, alts, members in results}
+        tree = db.fetch_artist_tree(artist_ids)
 
-        alt_ids = [i for row in results for i in row[2]]
-        cur.execute("""
-            SELECT id,name FROM artist WHERE id = ANY(%s)
-        """, (alt_ids,))
-        results = cur.fetchall()
-        for id, name in results:
-            if id not in self.alt_names:
-                self.alt_names[id] = [name, [], []]
-        
-        random.shuffle(self.songs)
+        self.alt_names |= {id: [name, alts, members] for id, name, alts, members in tree}
+
+        alt_ids = [i for _, _, alts, _ in tree for i in alts]
+        for id, name in db.fetch_artists_by_ids(alt_ids):
+            self.alt_names.setdefault(id, [name, [], []])
 
     def make_round(self, row):
         return Round(*row[:6], Tree(row[6], self.alt_names))
@@ -187,4 +142,58 @@ class GameSA(Game):
                 r=1
             return r
 
-gamemode = {"anime":GameAnime,"sa":GameSA}
+class GameTrain(GameSA):
+    def __init__(self, player_id):
+        self.skip_a = False
+        self.players = None
+        self.count = 0
+        self.score = 0
+        self.error = 0
+        self.songs = []
+        self.current = None
+        self.alt_names = {}
+
+        self.player_id = player_id
+        self.wrongs = []
+        self.rights = []
+        self.refill()
+
+    def refill(self):
+        self.songs += db.fetch_songs_srs(self.player_id)
+
+        artist_ids = [song[6] for song in self.songs]
+        tree = db.fetch_artist_tree(artist_ids)
+
+        self.alt_names |= {id: [name, alts, members] for id, name, alts, members in tree}
+
+        alt_ids = [i for _, _, alts, _ in tree for i in alts]
+        for id, name in db.fetch_artists_by_ids(alt_ids):
+            self.alt_names.setdefault(id, [name, [], []])
+    
+    def next(self, correct = True, retry = 0):
+        if self.current: (self.rights if correct else self.wrongs).append(self.current.id)
+
+        if retry > 2:
+            print("refill error")
+            return False
+        try:
+            row = self.songs.pop()
+            self.current = self.make_round(row)
+            self.count += 1
+            print(f"{self.count}: {self.get_ans()}")
+        except IndexError:
+            self.push_scores()
+            self.wrongs = []
+            self.rights = []
+            self.refill()
+            return self.next(retry = retry+1)
+        return True
+    
+    def push_scores(self):
+        db.update_current_round(self.player_id,len(self.wrongs)+len(self.rights))
+        db.update_srs(self.player_id, self.wrongs, self.rights)
+
+    def close(self):
+        self.push_scores()
+
+gamemode = {"anime":GameAnime,"sa":GameSA,"train":GameTrain}
