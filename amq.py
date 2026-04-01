@@ -25,10 +25,11 @@ async def download_audio(song_id, url):
         async with session.get(HEADER+url) as resp:
             if resp.status != 200:
                 raise Exception("Download failed")
-
             with open(file_path, "wb") as f:
+                print(url)
                 async for chunk in resp.content.iter_chunked(8192):
                     f.write(chunk)
+                print("done")
 
     return file_path
 
@@ -179,24 +180,22 @@ class GameTrain(GameSA):
 
         self.player_id = player_id
 
-        self.songs = deque()
-        self.refilling = False
+        self.songs = asyncio.Queue()
+        self.refill_task = None
 
         self.current = None
         self.alt_names = {}
 
     async def refill(self):
-        if self.refilling or len(self.songs) >= QUEUE_SIZE:
-            return
-        
-        self.refilling = True
+        print("downloading")
+
         existing_files = sorted((os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith(".mp3")),
                                 key=os.path.getmtime)
         cache_files = deque(existing_files)
         while len(cache_files) > CACHE_SIZE:
             os.remove(cache_files.popleft())
 
-        rows = db.fetch_songs_srs(self.player_id)
+        rows = db.fetch_songs_srs(self.player_id,QUEUE_SIZE)
         if not rows:
             return
 
@@ -207,18 +206,12 @@ class GameTrain(GameSA):
         for id, name in db.fetch_artists_by_ids(alt_ids):
             self.alt_names.setdefault(id, [name, [], []])
 
-        async def download(rows):
+        for row in rows:
             try:
-                for row in rows:
-                    try:
-                        file_path = await download_audio(row[0],row[1])
-                        self.songs.append((row[0],file_path,*row[2:]))
-                    except Exception as e:
-                        print(f"download failed: {row[0]}", e)
-            finally:
-                self.refilling = False
-
-        asyncio.create_task(download(rows))
+                file_path = await download_audio(row[0],row[1])
+                await self.songs.put((row[0], file_path, *row[2:]))
+            except Exception as e:
+                print(f"download failed: {row[0]}",e)
     
     async def next(self, correct=True):
         if self.current:
@@ -227,17 +220,14 @@ class GameTrain(GameSA):
             else:
                 db.update_srs_wrong(self.player_id, self.current.id)
 
-        await self.refill()
-
-        #wait for refill, error after 10s
-        start = asyncio.get_event_loop().time()
-        while len(self.songs) < 1:
-            if asyncio.get_event_loop().time() - start > 30:
-                print("no songs?")
-                return None
-            await asyncio.sleep(0.1)
+        if self.songs.qsize() < QUEUE_SIZE and (self.refill_task is None or self.refill_task.done()):
+            self.refill_task = asyncio.create_task(self.refill())
+        try:
+            row = await asyncio.wait_for(self.songs.get(),timeout=99)
+        except asyncio.TimeoutError:
+            print("no songs?")
+            return None
         
-        row = self.songs.popleft()
         self.current = self.make_round(row)
         self.count += 1
         print(f"{self.count}: {self.get_ans()}")

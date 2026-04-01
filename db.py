@@ -3,7 +3,6 @@ import os
 from contextlib import contextmanager
 
 MAX_LEARNING = 12
-FETCH_BATCH = 5
 
 @contextmanager
 def get_conn():
@@ -211,7 +210,7 @@ def fetch_artists_by_ids(ids):
         """, (ids,))
         return cur.fetchall()
     
-def fetch_songs_srs(player_id, limit = FETCH_BATCH):
+def fetch_songs_srs(player_id, limit):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute("""

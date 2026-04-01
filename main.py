@@ -56,9 +56,6 @@ async def on_ready():
     print(f"{bot.user} at your service!")
 
 async def next(vc, gid, correct = True):
-    if vc.is_playing():
-        vc.stop()
-
     file_path = await games[gid].next(correct)
     if not file_path:
         print("no audio")
@@ -67,11 +64,14 @@ async def next(vc, gid, correct = True):
     duration = MP3(file_path).info.length
     start_time = random.uniform(0, max(duration - 45, 0))
 
-    source = discord.FFmpegPCMAudio(
+    source = discord.FFmpegOpusAudio(
         file_path,
         before_options=f'-ss {start_time}',
         options='-vn -af "loudnorm=I=-20:TP=-1.5:LRA=11"'
     )
+
+    if vc.is_playing():
+        vc.stop()
     vc.play(
         source,
         #after=lambda e: asyncio.run_coroutine_threadsafe(next(vc, gid), bot.loop)
