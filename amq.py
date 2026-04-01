@@ -190,11 +190,15 @@ class GameTrain(GameSA):
         existing_files = sorted((os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith(".mp3")),
                                 key=os.path.getmtime)
         cache_files = deque(existing_files)
-
+        
         songs_files = set()
-        async with self.songs.mutex:
-            for item in self.songs._queue:
-                songs_files.add(item[1])
+        tmp_queue = []
+        while not self.songs.empty():
+            item = await self.songs.get()
+            songs_files.add(item[1])
+            tmp_queue.append(item)
+        for item in tmp_queue:
+            await self.songs.put(item)
 
         while len(cache_files) > CACHE_SIZE:
             file_to_remove = cache_files.popleft()
@@ -206,10 +210,6 @@ class GameTrain(GameSA):
                     print(f"File already gone: {file_to_remove}")
             else:
                 cache_files.append(file_to_remove)
-
-
-        while len(cache_files) > CACHE_SIZE:
-            os.remove(cache_files.popleft())
 
         rows = db.fetch_songs_srs(self.player_id,QUEUE_SIZE)
         if not rows:
@@ -236,7 +236,6 @@ class GameTrain(GameSA):
                 db.update_srs_correct(self.player_id, self.current.id)
             else:
                 db.update_srs_wrong(self.player_id, self.current.id)
-
         if self.songs.qsize() < QUEUE_SIZE and (self.refill_task is None or self.refill_task.done()):
             self.refill_task = asyncio.create_task(self.refill())
         try:
