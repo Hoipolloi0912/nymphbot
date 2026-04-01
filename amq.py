@@ -187,11 +187,27 @@ class GameTrain(GameSA):
         self.alt_names = {}
 
     async def refill(self):
-        print("downloading")
-
         existing_files = sorted((os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith(".mp3")),
                                 key=os.path.getmtime)
         cache_files = deque(existing_files)
+
+        songs_files = set()
+        async with self.songs.mutex:
+            for item in self.songs._queue:
+                songs_files.add(item[1])
+
+        while len(cache_files) > CACHE_SIZE:
+            file_to_remove = cache_files.popleft()
+            if file_to_remove not in songs_files:
+                try:
+                    os.remove(file_to_remove)
+                    print(f"Removed {file_to_remove}")
+                except FileNotFoundError:
+                    print(f"File already gone: {file_to_remove}")
+            else:
+                cache_files.append(file_to_remove)
+
+
         while len(cache_files) > CACHE_SIZE:
             os.remove(cache_files.popleft())
 
@@ -206,6 +222,7 @@ class GameTrain(GameSA):
         for id, name in db.fetch_artists_by_ids(alt_ids):
             self.alt_names.setdefault(id, [name, [], []])
 
+        print("downloading")
         for row in rows:
             try:
                 file_path = await download_audio(row[0],row[1])
