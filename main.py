@@ -52,7 +52,6 @@ async def on_ready():
     for guild in GUILD_IDS:
         bot.tree.add_command(amq_group, guild=guild)
         await bot.tree.sync(guild=guild)
-        break
     print(f"{bot.user} at your service!")
 
 async def next(vc, gid, correct = True):
@@ -124,7 +123,7 @@ async def amq_practice(interaction:discord.Interaction):
         if not vc:return
         await interaction.response.send_message("starting practice mode")
 
-        games[interaction.guild.id] = gamemode["train"](interaction.user.id)
+        games[interaction.guild.id] = gamemode["train"](interaction.user.id,interaction.guild.id)
         await next(vc,interaction.guild.id)
 
 @amq_group.command(name="anime-list", description="play songs from your anime list")

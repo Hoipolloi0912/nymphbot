@@ -10,28 +10,10 @@ QUEUE_SIZE = 8
 CACHE_SIZE = 50
 CACHE_DIR = "cache"
 HEADER = "https://naedist.animemusicquiz.com/"
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 def clean(s):
     return re.sub(r'[^\x00-\x7F]+', '', s.replace(" ", ""))
-
-async def download_audio(song_id, url):
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    file_path = f"{CACHE_DIR}/{song_id}.mp3"
-
-    if os.path.exists(file_path):
-        return file_path
-
-    async with aiohttp.ClientSession() as session:
-        async with session.get(HEADER+url) as resp:
-            if resp.status != 200:
-                raise Exception("Download failed")
-            with open(file_path, "wb") as f:
-                print(url)
-                async for chunk in resp.content.iter_chunked(8192):
-                    f.write(chunk)
-                print("done")
-
-    return file_path
 
 class Tree:
     def __init__(self,root_id,data):
@@ -171,7 +153,7 @@ class GameSA(Game):
             return r
 
 class GameTrain(GameSA):
-    def __init__(self, player_id):
+    def __init__(self, player_id, server_id):
         self.skip_a = False
         self.players = None
         self.count = 0
@@ -179,6 +161,7 @@ class GameTrain(GameSA):
         self.error = 0
 
         self.player_id = player_id
+        self.server_id = server_id
 
         self.songs = asyncio.Queue()
         self.refill_task = None
@@ -225,7 +208,7 @@ class GameTrain(GameSA):
         print("downloading")
         for row in rows:
             try:
-                file_path = await download_audio(row[0],row[1])
+                file_path = await self.download_audio(row[0],row[1])
                 await self.songs.put((row[0], file_path, *row[2:]))
             except Exception as e:
                 print(f"download failed: {row[0]}",e)
@@ -248,5 +231,25 @@ class GameTrain(GameSA):
         self.count += 1
         print(f"{self.count}: {self.get_ans()}")
         return self.current.link
+    
+    async def download_audio(self,song_id, url):
+        directory = f"{CACHE_DIR}/{self.server_id}"
+        os.makedirs(directory, exist_ok=True)
+        file_path = f"{directory}/{song_id}.mp3"
+
+        if os.path.exists(file_path):
+            return file_path
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(HEADER+url) as resp:
+                if resp.status != 200:
+                    raise Exception("Download failed")
+                with open(file_path, "wb") as f:
+                    print(url)
+                    async for chunk in resp.content.iter_chunked(8192):
+                        f.write(chunk)
+                    print("done")
+
+        return file_path
 
 gamemode = {"anime":GameAnime,"sa":GameSA,"train":GameTrain}
