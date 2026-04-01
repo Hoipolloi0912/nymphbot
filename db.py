@@ -3,7 +3,7 @@ import os
 from contextlib import contextmanager
 
 MAX_LEARNING = 12
-BATCH_SIZE = 5
+FETCH_BATCH = 5
 
 @contextmanager
 def get_conn():
@@ -78,7 +78,7 @@ def upsert_user_song_list(discord_id: int, song_ids: list[int], current_round: i
             WHERE user_song.is_active = FALSE
         """, (discord_id, current_round, current_round, song_ids))
 
-def get_song_ids_from_anime_ids(website: str, anime_ids: list[int]) -> list[int]:
+def get_ann_song_ids_from_anime_ids(website: str, anime_ids: list[int]) -> list[int]:
     if website not in ("mal", "anilist","ann"):
         raise ValueError("website must be 'mal' or 'anilist'")
     if not anime_ids:
@@ -95,7 +95,25 @@ def get_song_ids_from_anime_ids(website: str, anime_ids: list[int]) -> list[int]
         )
         return list({row[0] for row in cur.fetchall()})
     
-def get_song_ids_from_artist_id(artist_id: int, limit) -> list[int]:
+def get_amq_song_ids_from_anime_ids(website: str, anime_ids: list[int]) -> list[int]:
+    if website not in ("mal", "anilist","ann"):
+        raise ValueError("website must be 'mal' or 'anilist'")
+    if not anime_ids:
+        return []
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT b.amq_song_id
+            FROM anison b join anime a on b.anime_id = a.ann_id join song c on b.amq_song_id = c.amq_song_id
+            WHERE a.{website}_id = ANY(%s::BIGINT[])
+            AND c.category != 2
+            """,
+            (anime_ids,)
+        )
+        return list({row[0] for row in cur.fetchall()})
+    
+def get_ann_song_ids_from_artist_id(artist_id: int, limit) -> list[int]:
     query = """
     WITH RECURSIVE containing_groups AS (
     SELECT id, name, member_id
@@ -193,14 +211,7 @@ def fetch_artists_by_ids(ids):
         """, (ids,))
         return cur.fetchall()
     
-def fetch_songs_srs(player_id, limit=BATCH_SIZE):
-    """
-    Weighted SRS selection + intentional 'surprise' picks.
-
-    - Heavy bias toward overdue + learning, then new, then mature.
-    - Adds a small 'surprise' slice (usually mature/not-due) to keep rounds from feeling samey.
-    - Still dedups (discord_id, amq_song_id) via your existing dedup CTE.
-    """
+def fetch_songs_srs(player_id, limit = FETCH_BATCH):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -271,133 +282,121 @@ def fetch_songs_srs(player_id, limit=BATCH_SIZE):
         """, (player_id, limit, limit))
         return cur.fetchall()
 
-
-def update_current_round(player_id, step):
+def update_srs_correct(discord_id, song_id):
     with get_conn() as conn:
         with conn.cursor() as cur:
+            #update current round
             cur.execute("""
                 UPDATE users
-                SET current_round = current_round + %s
+                SET current_round = current_round + 1
                 WHERE discord_id = %s
-            """, (step, player_id))
+                RETURNING current_round
+            """, (discord_id,))
+            current_round = cur.fetchone()[0]
+
+            #get srs metrics
+            cur.execute("""
+                SELECT
+                    ease_factor,
+                    interval_rounds
+                FROM user_song
+                WHERE discord_id = %s
+                AND amq_song_id = %s
+            """, (discord_id, song_id))
+            ef, interval = cur.fetchone()
+
+            #calculate new metrics
+            if interval == 0:
+                new_interval = 1
+            elif interval == 1:
+                new_interval = 6
+            else:
+                new_interval = int(interval * ef)
+
+            ef += 0.1
+            if ef < 1.3:
+                ef = 1.3
+
+            next_round = current_round + new_interval
+
+            cur.execute("""
+                UPDATE user_song
+                SET
+                    ease_factor = %s,
+                    interval_rounds = %s,
+                    last_review_round = %s,
+                    next_review_round = %s,
+
+                    total_reviews = total_reviews + 1,
+                    correct_reviews = correct_reviews + 1,
+
+                    state = 'learning'
+
+                WHERE discord_id = %s
+                AND amq_song_id = %s
+            """, (
+                ef,
+                new_interval,
+                current_round,
+                next_round,
+                discord_id,
+                song_id
+            ))
+
         conn.commit()
 
-def update_srs(player_id, right_ids, wrong_ids):
-    if not right_ids and not wrong_ids:
-        return
-
-    right_ids = list(right_ids or [])
-    wrong_ids = list(wrong_ids or [])
-
-    with get_conn() as conn, conn.cursor() as cur:
-        # Fetch current_round once
-        cur.execute("""
-            SELECT current_round
-            FROM users
-            WHERE discord_id = %s
-        """, (player_id,))
-        row = cur.fetchone()
-        if not row:
-            return
-        current_round = row[0]
-
-        # 1) WRONG: always push into learning + reset interval
-        if wrong_ids:
+def update_srs_wrong(discord_id, song_id):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            #update current round
             cur.execute("""
-                UPDATE user_song u
+                UPDATE users
+                SET current_round = current_round + 1
+                WHERE discord_id = %s
+                RETURNING current_round
+            """, (discord_id,))
+            current_round = cur.fetchone()[0]
+
+            #get current srs metrics
+            cur.execute("""
+                SELECT ease_factor
+                FROM user_song
+                WHERE discord_id = %s
+                AND amq_song_id = %s
+            """, (discord_id, song_id))
+            ef = cur.fetchone()[0]
+
+            #calculate new srs values
+            ef -= 0.2
+            if ef < 1.3:
+                ef = 1.3
+
+            new_interval = 1
+            next_round = current_round + 1
+
+            #update db
+            cur.execute("""
+                UPDATE user_song
                 SET
-                    total_reviews     = u.total_reviews + 1,
-                    interval_rounds   = 1,
-                    ease_factor       = GREATEST(1.3, u.ease_factor - 0.20),
-                    state             = 'learning',
+                    ease_factor = %s,
+                    interval_rounds = %s,
                     last_review_round = %s,
-                    next_review_round = %s + 1
-                WHERE u.discord_id = %s
-                  AND u.amq_song_id = ANY(%s::BIGINT[])
-            """, (current_round, current_round, player_id, wrong_ids))
+                    next_review_round = %s,
 
-        # 2) Learning buffer AFTER wrongs (wrongs consume slots)
-        cur.execute("""
-            SELECT COUNT(*)
-            FROM user_song
-            WHERE discord_id = %s
-              AND state = 'learning'
-              AND is_active = TRUE
-        """, (player_id,))
-        learning_count = cur.fetchone()[0]
-        slots = max(0, MAX_LEARNING - learning_count)
+                    total_reviews = total_reviews + 1,
 
-        # 3) RIGHT: update stats + EF for all correct first
-        if right_ids:
-            cur.execute("""
-                UPDATE user_song u
-                SET
-                    total_reviews     = u.total_reviews + 1,
-                    correct_reviews   = u.correct_reviews + 1,
-                    ease_factor       = LEAST(2.8, u.ease_factor + 0.10),
-                    last_review_round = %s
-                WHERE u.discord_id = %s
-                  AND u.amq_song_id = ANY(%s::BIGINT[])
-            """, (current_round, player_id, right_ids))
+                    state = 'learning'
 
-            # 3a) learning -> mature (always), compute next interval
-            cur.execute("""
-                UPDATE user_song u
-                SET
-                    state = 'mature',
-                    interval_rounds = CASE
-                        WHEN u.interval_rounds <= 0 THEN 1
-                        WHEN u.interval_rounds = 1 THEN 2
-                        ELSE CEIL(u.interval_rounds * u.ease_factor)::BIGINT
-                    END,
-                    next_review_round = %s + CASE
-                        WHEN u.interval_rounds <= 0 THEN 1
-                        WHEN u.interval_rounds = 1 THEN 2
-                        ELSE CEIL(u.interval_rounds * u.ease_factor)::BIGINT
-                    END
-                WHERE u.discord_id = %s
-                  AND u.state = 'learning'
-                  AND u.amq_song_id = ANY(%s::BIGINT[])
-            """, (current_round, player_id, right_ids))
-
-            # 3b) mature stays mature: grow interval again
-            cur.execute("""
-                UPDATE user_song u
-                SET
-                    interval_rounds = CASE
-                        WHEN u.interval_rounds <= 0 THEN 1
-                        WHEN u.interval_rounds = 1 THEN 2
-                        ELSE CEIL(u.interval_rounds * u.ease_factor)::BIGINT
-                    END,
-                    next_review_round = %s + CASE
-                        WHEN u.interval_rounds <= 0 THEN 1
-                        WHEN u.interval_rounds = 1 THEN 2
-                        ELSE CEIL(u.interval_rounds * u.ease_factor)::BIGINT
-                    END
-                WHERE u.discord_id = %s
-                  AND u.state = 'mature'
-                  AND u.amq_song_id = ANY(%s::BIGINT[])
-            """, (current_round, player_id, right_ids))
-
-            # 3c) new -> learning (BUFFERED): only promote up to slots
-            if slots > 0:
-                cur.execute("""
-                    UPDATE user_song u
-                    SET
-                        state = 'learning',
-                        interval_rounds = 1,
-                        next_review_round = %s + 1
-                    WHERE u.discord_id = %s
-                      AND u.amq_song_id IN (
-                          SELECT amq_song_id
-                          FROM user_song
-                          WHERE discord_id = %s
-                            AND state = 'new'
-                            AND amq_song_id = ANY(%s::BIGINT[])
-                          ORDER BY next_review_round NULLS FIRST
-                          LIMIT %s
-                      )
-                """, (current_round, player_id, player_id, right_ids, slots))
+                WHERE discord_id = %s
+                AND amq_song_id = %s
+            """, (
+                ef,
+                new_interval,
+                current_round,
+                next_round,
+                discord_id,
+                song_id
+            ))
 
         conn.commit()
 

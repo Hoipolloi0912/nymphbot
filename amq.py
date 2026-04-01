@@ -1,9 +1,36 @@
 from difflib import SequenceMatcher as sm
 import re
 import db
+import os
+import aiohttp
+import asyncio
+from collections import deque
+
+QUEUE_SIZE = 8
+CACHE_SIZE = 50
+CACHE_DIR = "cache"
+HEADER = "https://naedist.animemusicquiz.com/"
 
 def clean(s):
     return re.sub(r'[^\x00-\x7F]+', '', s.replace(" ", ""))
+
+async def download_audio(song_id, url):
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    file_path = f"{CACHE_DIR}/{song_id}.mp3"
+
+    if os.path.exists(file_path):
+        return file_path
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(HEADER+url) as resp:
+            if resp.status != 200:
+                raise Exception("Download failed")
+
+            with open(file_path, "wb") as f:
+                async for chunk in resp.content.iter_chunked(8192):
+                    f.write(chunk)
+
+    return file_path
 
 class Tree:
     def __init__(self,root_id,data):
@@ -36,7 +63,7 @@ class Tree:
 class Round:
     def __init__(self,id,link,en,jp,sn,a,alts):
         self.id = id
-        self.link=link
+        self.link = link
         self.en=en
         self.jp=jp
         self.sn=sn
@@ -57,7 +84,7 @@ class Game:
         self.init_data(song_ids)
 
     def getlink(self):
-        return self.current.link if self.current else None
+        return self.current.file_path if self.current else None
     
     def next(self,correct):
         try:
@@ -149,51 +176,71 @@ class GameTrain(GameSA):
         self.count = 0
         self.score = 0
         self.error = 0
-        self.songs = []
+
+        self.player_id = player_id
+
+        self.songs = deque()
+        self.refilling = False
+
         self.current = None
         self.alt_names = {}
 
-        self.player_id = player_id
-        self.wrongs = []
-        self.rights = []
-        self.refill()
+    async def refill(self):
+        if self.refilling or len(self.songs) >= QUEUE_SIZE:
+            return
+        
+        self.refilling = True
+        existing_files = sorted((os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith(".mp3")),
+                                key=os.path.getmtime)
+        cache_files = deque(existing_files)
+        while len(cache_files) > CACHE_SIZE:
+            os.remove(cache_files.popleft())
 
-    def refill(self):
-        self.songs += db.fetch_songs_srs(self.player_id)
+        rows = db.fetch_songs_srs(self.player_id)
+        if not rows:
+            return
 
-        artist_ids = [song[6] for song in self.songs]
+        artist_ids = [row[6] for row in rows]
         tree = db.fetch_artist_tree(artist_ids)
-
         self.alt_names |= {id: [name, alts, members] for id, name, alts, members in tree}
-
         alt_ids = [i for _, _, alts, _ in tree for i in alts]
         for id, name in db.fetch_artists_by_ids(alt_ids):
             self.alt_names.setdefault(id, [name, [], []])
-    
-    def next(self, correct = True, retry = 0):
-        if self.current: (self.rights if correct else self.wrongs).append(self.current.id)
 
-        if retry > 2:
-            print("refill error")
-            return False
-        try:
-            row = self.songs.pop()
-            self.current = self.make_round(row)
-            self.count += 1
-            print(f"{self.count}: {self.get_ans()}")
-        except IndexError:
-            self.push_scores()
-            self.wrongs = []
-            self.rights = []
-            self.refill()
-            return self.next(retry = retry+1)
-        return True
-    
-    def push_scores(self):
-        db.update_current_round(self.player_id,len(self.wrongs)+len(self.rights))
-        db.update_srs(self.player_id, self.wrongs, self.rights)
+        async def download(rows):
+            try:
+                for row in rows:
+                    try:
+                        file_path = await download_audio(row[0],row[1])
+                        self.songs.append((row[0],file_path,*row[2:]))
+                    except Exception as e:
+                        print(f"download failed: {row[0]}", e)
+            finally:
+                self.refilling = False
 
-    def close(self):
-        self.push_scores()
+        asyncio.create_task(download(rows))
+    
+    async def next(self, correct=True):
+        if self.current:
+            if correct:
+                db.update_srs_correct(self.player_id, self.current.id)
+            else:
+                db.update_srs_wrong(self.player_id, self.current.id)
+
+        await self.refill()
+
+        #wait for refill, error after 10s
+        start = asyncio.get_event_loop().time()
+        while len(self.songs) < 1:
+            if asyncio.get_event_loop().time() - start > 30:
+                print("no songs?")
+                return None
+            await asyncio.sleep(0.1)
+        
+        row = self.songs.popleft()
+        self.current = self.make_round(row)
+        self.count += 1
+        print(f"{self.count}: {self.get_ans()}")
+        return self.current.link
 
 gamemode = {"anime":GameAnime,"sa":GameSA,"train":GameTrain}
