@@ -77,10 +77,7 @@ async def next(vc, gid, correct = True):
 
     if vc.is_playing():
         vc.stop()
-    vc.play(
-        source,
-        #after=lambda e: asyncio.run_coroutine_threadsafe(next(vc, gid), bot.loop)
-    )
+    vc.play(source,)
 
     return True
 
