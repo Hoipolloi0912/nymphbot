@@ -17,6 +17,14 @@ def get_conn():
     finally:
         conn.close()
 
+def get_random_links(count):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            select link from anison order by random() limit %s
+        """, (count,))
+        return [row[0] for row in cur.fetchall()]
+
+
 def upsert_user(discord_id: int):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""

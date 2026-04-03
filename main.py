@@ -10,12 +10,16 @@ from cache_autofill import get_anime_dict, get_artist_dict, get_song_dict
 import db
 import random
 import subprocess
+import time
+import aiohttp
 
 load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN")
 GUILD_IDS = [discord.Object(id=int(gid.strip())) for gid in os.getenv("GUILD_IDS", "").split(",")]
 HEADER = "https://naedist.animemusicquiz.com/"
 DB_URL=os.getenv('DB_URL')
+TEST_DURATION = 10
+CHUNK_SIZE = 64 * 1024
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -110,6 +114,39 @@ async def user_update(interaction: discord.Interaction,
     db.upsert_user_song_list(interaction.user.id, song_ids, current_round)
 
     await interaction.followup.send(f"update sucessful.", ephemeral=True)
+
+@amq_group.command(name="test",description="check current download speed")
+async def amq_test(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    links = db.get_random_links(10)
+    downloaded = 0
+    start_time = time.time()
+    timeout = aiohttp.ClientTimeout(total=None)
+    count = 0
+
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                for link in links:
+                    url = f"{HEADER}{link}?nocache={random.randint(1,999999)}"
+                    async with session.get(url) as resp:
+                        if resp.status != 200:continue
+                        async for chunk in resp.content.iter_chunked(CHUNK_SIZE):
+                            downloaded += len(chunk)
+                            elapsed = time.time() - start_time
+                            if elapsed >= TEST_DURATION: break
+                    if time.time() - start_time >= TEST_DURATION:break
+                    count +=1
+                if time.time() - start_time >= TEST_DURATION:break
+
+        elapsed = time.time() - start_time
+        speed_bps = downloaded / elapsed
+        speed_mbps = speed_bps / (1024 * 1024)
+
+        await interaction.followup.send(f"Downloaded: {count} files at {speed_mbps:.2f} MB/s")
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ Speed test failed:\n`{e}`")
 
 @amq_group.command(name="practice", description="training mode")
 async def amq_practice(interaction:discord.Interaction):
