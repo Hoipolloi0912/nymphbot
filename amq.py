@@ -194,8 +194,7 @@ class GameTrain(GameSA):
             else:
                 cache_files.append(file_to_remove)
 
-        #rows = db.fetch_songs_srs(self.player_id,QUEUE_SIZE)
-        rows = db.fetch_songs_srs()
+        rows = db.fetch_songs_srs(self.player_id,QUEUE_SIZE)
         if not rows:
             return
 
