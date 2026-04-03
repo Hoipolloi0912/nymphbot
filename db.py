@@ -209,7 +209,7 @@ def fetch_artists_by_ids(ids):
             SELECT id,name FROM artist WHERE id = ANY(%s)
         """, (ids,))
         return cur.fetchall()
-    
+
 def fetch_songs_srs(player_id, limit):
     with get_conn() as conn:
         cur = conn.cursor()

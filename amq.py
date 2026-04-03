@@ -7,7 +7,7 @@ import asyncio
 from collections import deque
 
 QUEUE_SIZE = 8
-CACHE_SIZE = 50
+CACHE_SIZE = 20
 CACHE_DIR = "cache"
 HEADER = "https://naedist.animemusicquiz.com/"
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -194,7 +194,8 @@ class GameTrain(GameSA):
             else:
                 cache_files.append(file_to_remove)
 
-        rows = db.fetch_songs_srs(self.player_id,QUEUE_SIZE)
+        #rows = db.fetch_songs_srs(self.player_id,QUEUE_SIZE)
+        rows = db.fetch_songs_srs()
         if not rows:
             return
 
@@ -229,13 +230,13 @@ class GameTrain(GameSA):
         
         self.current = self.make_round(row)
         self.count += 1
-        print(f"{self.count}: {self.get_ans()}")
+        print(f"{self.count}: [{self.current.link}]{self.get_ans()}")
         return self.current.link
     
     async def download_audio(self,song_id, url):
         directory = f"{CACHE_DIR}/{self.server_id}"
         os.makedirs(directory, exist_ok=True)
-        file_path = f"{directory}/{song_id}.mp3"
+        file_path = f"{directory}/{url}"
 
         if os.path.exists(file_path):
             return file_path

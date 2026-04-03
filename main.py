@@ -9,7 +9,7 @@ from listApi import get_list
 from cache_autofill import get_anime_dict, get_artist_dict, get_song_dict
 import db
 import random
-from mutagen.mp3 import MP3
+import subprocess
 
 load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN")
@@ -60,7 +60,9 @@ async def next(vc, gid, correct = True):
         print("no audio")
         return False
 
-    duration = MP3(file_path).info.length
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration","-of", "default=noprint_wrappers=1:nokey=1", file_path]
+    duration = float(subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).stdout)
+
     start_time = random.uniform(0, max(duration - 45, 0))
 
     source = discord.FFmpegOpusAudio(
