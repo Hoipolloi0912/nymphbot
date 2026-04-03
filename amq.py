@@ -7,7 +7,7 @@ import asyncio
 from collections import deque
 
 QUEUE_SIZE = 8
-CACHE_SIZE = 20
+CACHE_SIZE = 12
 CACHE_DIR = "cache"
 HEADER = "https://naedist.animemusicquiz.com/"
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -170,7 +170,8 @@ class GameTrain(GameSA):
         self.alt_names = {}
 
     async def refill(self):
-        existing_files = sorted((os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith(".mp3")),
+        directory = f"{CACHE_DIR}/{self.server_id}"
+        existing_files = sorted((os.path.join(directory, f) for f in os.listdir(directory) if f.endswith(".mp3")),
                                 key=os.path.getmtime)
         cache_files = deque(existing_files)
         
