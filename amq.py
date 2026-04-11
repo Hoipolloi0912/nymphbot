@@ -180,6 +180,7 @@ class GameAnime(Game):
     def check(self, a):
         a = clean(a).lower()
         tar = self.current
+        if not tar: return False
 
         correct = any(sm(lambda x: x == " ", a, clean(name).lower()).ratio() > 0.9
                       for name in [tar.en, tar.jp] + tar.alts
@@ -187,7 +188,6 @@ class GameAnime(Game):
 
         self.score += correct
         return correct
-
 
 class GameSA(Game):
     def prepare_alt_names(self, rows):
@@ -205,6 +205,7 @@ class GameSA(Game):
     def check(self, a):
         a = clean(a)
         cur = self.current
+        if not cur: return False
         r = 0
         if not cur.guessed[0] and a == clean(cur.sn):
             cur.guessed[0] = True
@@ -228,6 +229,7 @@ class GameSA(Game):
 
 class GameTrain(GameSA):
     def __init__(self, player_id, server_id):
+        self.skip_a = False
         self.count = 0
         self.score = 0
         self.error = 0

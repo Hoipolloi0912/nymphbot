@@ -86,7 +86,6 @@ async def terminate(interaction):
     if vc:
         await vc.disconnect()
     if interaction.guild.id in games:
-        games[interaction.guild.id].close()
         del games[interaction.guild.id]
 
 @amq_group.command(name="update", description="update user's anime list")
