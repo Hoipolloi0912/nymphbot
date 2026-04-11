@@ -12,6 +12,7 @@ import random
 import subprocess
 import time
 import aiohttp
+import cache_autofill
 
 load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN")
@@ -20,6 +21,11 @@ HEADER = "https://naedist.animemusicquiz.com/"
 DB_URL=os.getenv('DB_URL')
 TEST_DURATION = 10
 CHUNK_SIZE = 64 * 1024
+CACHE_DIR = "cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+cache_autofill.make_anime_json()
+cache_autofill.make_artist_json()
+cache_autofill.make_song_json()
 
 intents = discord.Intents.default()
 intents.message_content = True

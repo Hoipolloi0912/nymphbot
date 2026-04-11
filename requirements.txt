@@ -1,0 +1,5 @@
+aiohttp==3.8.5
+discord.py[voice]==2.7.1
+psycopg==3.2.9
+python-dotenv==1.2.2
+Requests==2.33.1
