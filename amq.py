@@ -85,7 +85,7 @@ class Game:
     def getlink(self):
         return self.current.link if self.current else None
 
-    async def next(self):
+    async def next(self,correct):
         if not self.song_ids and self.queue.empty() and not self.refill_lock.locked():
             
             return False
@@ -240,50 +240,42 @@ class GameSA(Game):
         return r
 
 class GameTrain(GameSA):
-    def __init__(self, player_id, server_id):
+    def __init__(self, player_id, server_id, vc):
         self.count = 0
         self.score = 0
         self.player_id = player_id
         self.server_id = server_id
+        self.vc = vc
+        self.trash = []
         self.song_ids = deque()
         self.queue = asyncio.Queue()
-        self.refill_task = None
+        self.refill_lock = asyncio.Lock()
         self.current = None
         self.alt_names = {}
 
     async def refill(self):
-        await self.clear_cache()
-        rows = db.fetch_songs_srs(self.player_id, QUEUE_SIZE)
-        if not rows:
-            return
+        async with self.refill_lock:
+            await self.clear_cache()
+            rows = db.fetch_songs_srs(self.player_id, QUEUE_SIZE)
+            if not rows:
+                return False
 
-        self.prepare_alt_names(rows)
+            self.prepare_alt_names(rows)
 
-        for row in rows:
-            try:
-                file_path = await self.download_audio(row[1])
-                round_obj = self.make_round((row[0], file_path, *row[2:]))
-                await self.queue.put(round_obj)
+            for row in rows:
+                try:
+                    file_path = await self.download_audio(row[1])
+                    round_obj = self.make_round((row[0], file_path, *row[2:]))
+                    await self.queue.put(round_obj)
 
-            except Exception as e:
-                print(f"download failed: {row[0]}",e)
+                except Exception as e:
+                    print(f"download failed: {row[0]}",e)
 
     async def next(self, correct=True):
         if self.current:
             if correct: db.update_srs_correct(self.player_id,self.current.id)
             else: db.update_srs_wrong(self.player_id,self.current.id)
 
-        if self.queue.qsize() < QUEUE_SIZE and (self.refill_task is None or self.refill_task.done()):
-            self.refill_task = asyncio.create_task(self.refill())
-
-        try:
-            self.current = await asyncio.wait_for(self.queue.get(),timeout=50)
-        except asyncio.TimeoutError:
-            print("no songs?")
-            return None
-
-        self.count += 1
-        print(f"{self.count}: [{self.current.link}] {self.get_ans()}")
-        return self.current.link
+        return await super().next()
 
 game = {"Anime":GameAnime,"Song/Artist":GameSA,"Train":GameTrain}

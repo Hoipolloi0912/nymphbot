@@ -147,8 +147,8 @@ async def amq_practice(interaction:discord.Interaction):
         if not vc:return
         await interaction.response.send_message("starting practice mode")
 
-        games[interaction.guild.id] = gamemode["train"](interaction.user.id,interaction.guild.id)
-        await next(vc,interaction.guild.id)
+        games[interaction.guild.id] = game["Train"](interaction.user.id,interaction.guild.id)
+        await games[interaction.guild.id].start()
 
 @amq_group.command(name="anime-list", description="play songs from your anime list")
 @app_commands.describe(name="list username",
@@ -372,7 +372,7 @@ async def s(ctx):
     async with lock:
         if ctx.guild.id in games and games[ctx.guild.id].current:
             await ctx.send(f"{games[ctx.guild.id].count}: {games[ctx.guild.id].get_ans()}")
-            if not await games[ctx.guild.id].next():
+            if not await games[ctx.guild.id].next(False):
                 await ctx.send(f"{games[ctx.guild.id].score}/{games[ctx.guild.id].count}")
                 await terminate(ctx.guild.id)
 
@@ -402,7 +402,7 @@ async def on_message(message):
                 await message.channel.send(f"{games[message.guild.id].count}: ✅ {games[message.guild.id].get_ans()}")
                 vc = get(bot.voice_clients, guild__id=message.guild.id)
                 if vc:
-                    if not await games[message.guild.id].next():
+                    if not await games[message.guild.id].next(True):
                         await message.channel.send(f"{games[message.guild.id].score}/{games[message.guild.id].count}")
                         await terminate(message.guild.id)
             elif state ==2:
