@@ -4,7 +4,6 @@ from discord import app_commands
 from discord.utils import get
 from collections import defaultdict
 from dotenv import load_dotenv
-from amq import gamemode
 from listApi import get_list
 from cache_autofill import get_anime_dict, get_artist_dict, get_song_dict
 import db
@@ -13,6 +12,7 @@ import subprocess
 import time
 import aiohttp
 import cache_autofill
+from lobby import *
 
 load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN")
@@ -30,7 +30,7 @@ cache_autofill.make_song_json()
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
-games = {}
+lobbies = {}
 guild_locks = defaultdict(asyncio.Lock)
 conn = None
 amq_group = app_commands.Group(name="amq", description="start a game of amq")
@@ -64,35 +64,18 @@ async def on_ready():
         await bot.tree.sync(guild=guild)
     print(f"{bot.user} at your service!")
 
-async def next(vc, gid, correct = True):
-    file_path = await games[gid].next(correct)
-    if not file_path:
-        print("no audio")
-        return False
-
-    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration","-of", "default=noprint_wrappers=1:nokey=1", file_path]
-    duration = float(subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).stdout)
-
-    start_time = random.uniform(0, max(duration - 45, 0))
-
-    source = discord.FFmpegOpusAudio(
-        file_path,
-        before_options=f'-ss {start_time}',
-        options='-vn -af "loudnorm=I=-20:TP=-1.5:LRA=11"'
-    )
-
-    if vc.is_playing():
-        vc.stop()
-    vc.play(source,)
-
-    return True
-
-async def terminate(interaction):
-    vc = get(bot.voice_clients, guild__id=interaction.guild.id)
-    if vc:
-        await vc.disconnect()
-    if interaction.guild.id in games:
-        del games[interaction.guild.id]
+@amq_group.command(name="start")
+async def amq_init(interaction: discord.Interaction):
+    if not interaction.user.voice:
+        await interaction.response.send_message("join a voice channel", ephemeral=True)
+        return
+    if interaction.guild.id not in lobbies:
+        lobby = Lobby(interaction.guild, interaction.user.voice.channel, interaction.user.id)
+        lobbies[interaction.guild.id] = lobby
+    view = LobbyView(lobbies[interaction.guild.id])
+    embed = lobbies[interaction.guild.id].create_embed()
+    await interaction.response.send_message(embed=embed,view=view)
+    lobbies[interaction.guild.id].message = await interaction.original_response()
 
 @amq_group.command(name="update", description="update user's anime list")
 @app_commands.describe(name="list username")
@@ -387,13 +370,11 @@ async def s(ctx):
     if lock.locked():
         return
     async with lock:
-        vc = get(bot.voice_clients, guild__id=ctx.guild.id)
-        if ctx.guild.id in games and vc and games[ctx.guild.id].current:
+        if ctx.guild.id in games and games[ctx.guild.id].current:
             await ctx.send(f"{games[ctx.guild.id].count}: {games[ctx.guild.id].get_ans()}")
-            if not await next(vc, ctx.guild.id, False):
+            if not await games[ctx.guild.id].next():
                 await ctx.send(f"{games[ctx.guild.id].score}/{games[ctx.guild.id].count}")
-                print(f"{games[ctx.guild.id].error} dead links")
-                await terminate(ctx)
+                await terminate(ctx.guild.id)
 
 @bot.command(help="end current game")
 async def q(ctx):
@@ -404,7 +385,7 @@ async def q(ctx):
         if ctx.guild.id not in games:
             return False
         await ctx.send("quitting")
-        await terminate(ctx)
+        await terminate(ctx.guild.id)
 
 @bot.event
 async def on_message(message):
@@ -421,9 +402,9 @@ async def on_message(message):
                 await message.channel.send(f"{games[message.guild.id].count}: ✅ {games[message.guild.id].get_ans()}")
                 vc = get(bot.voice_clients, guild__id=message.guild.id)
                 if vc:
-                    if not await next(vc, message.guild.id):
-                        await message.channel.send(f"{games[message.guild.id].score}/{games[message.guild.id].count}, {games[message.guild.id].error} dead links")
-                        await terminate(message)
+                    if not await games[message.guild.id].next():
+                        await message.channel.send(f"{games[message.guild.id].score}/{games[message.guild.id].count}")
+                        await terminate(message.guild.id)
             elif state ==2:
                 await message.channel.send(f"✅ {message.content}")
 

@@ -120,6 +120,18 @@ def get_amq_song_ids_from_anime_ids(website: str, anime_ids: list[int]) -> list[
         )
         return list({row[0] for row in cur.fetchall()})
     
+def get_amq_song_ids_from_user_ids(user_ids,limit):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT amq_song_id
+            FROM user_song
+            WHERE discord_id = ANY(%s)
+            AND is_active = TRUE
+            GROUP BY amq_song_id
+            ORDER BY RANDOM()
+            LIMIT %s""",(user_ids,limit))
+        return [row[0] for row in cur.fetchall()]
+
 def get_ann_song_ids_from_artist_id(artist_id: int, limit) -> list[int]:
     query = """
     WITH RECURSIVE containing_groups AS (
@@ -164,19 +176,26 @@ def fetch_artist_tree_for_song(amq_song_id: int):
     tree = fetch_artist_tree([artist_id,])
     return artist_id, tree
 
-def fetch_from_ann_song_id(ann_song_ids):
-    placeholders = ','.join(['%s'] * len(ann_song_ids))
+def fetch_from_amq_song_id(amq_song_ids):
+    placeholders = ','.join(['%s'] * len(amq_song_ids))
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(f"""
-            SELECT a.amq_song_id, a.link, d.name_en, d.name_ja, b.name, c.name, c.id
+            SELECT DISTINCT ON (a.amq_song_id)
+                a.amq_song_id,
+                a.link,
+                d.name_en,
+                d.name_ja,
+                b.name,
+                c.name,
+                c.id
             FROM anison a
             JOIN song b ON a.amq_song_id = b.amq_song_id
             JOIN artist c ON b.artist_id = c.id
             JOIN anime d ON a.anime_id = d.ann_id
-            WHERE a.ann_song_id IN ({placeholders})
-            ORDER BY RANDOM();
-        """, ann_song_ids)
+            WHERE a.amq_song_id IN ({placeholders})
+            ORDER BY a.amq_song_id, RANDOM();
+        """, amq_song_ids)
         return cur.fetchall()
     
 def fetch_alt_anime_names(ann_song_ids):

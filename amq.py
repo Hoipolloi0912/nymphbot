@@ -4,7 +4,11 @@ import db
 import os
 import aiohttp
 import asyncio
+import subprocess
+import random
+import shutil
 from collections import deque
+from discord import FFmpegOpusAudio
 
 QUEUE_SIZE = 5
 CACHE_SIZE = 10
@@ -55,34 +59,62 @@ class Round:
         self.guessed = [False,False]
 
 class Game:
-    def __init__(self, song_ids, skip_a=False, server_id="default"):
-        self.skip_a = skip_a
-        self.players = 1
+    def __init__(self, settings):
+        self.skip_a = False
         self.count = 0
         self.score = 0
-        self.error = 0
-        self.song_ids = deque(song_ids)
+        self.song_ids = deque(db.get_amq_song_ids_from_user_ids(list(settings.players),settings.rounds))
         self.queue = asyncio.Queue()
-        self.refill_task = None
+        self.refill_lock = asyncio.Lock()
         self.current = None
         self.alt_names = {}
-        self.server_id = server_id
+        self.server_id = settings.guild.id
+        self.vc = settings.vc
+        self.trash = []
+    
+    async def start(self):
+        self.vc = await self.vc.connect()
+        return await self.next()
+
+    async def end(self):
+        await self.vc.disconnect()
+        path = f"{CACHE_DIR}/{self.server_id}"
+        if path and os.path.exists(path):
+            shutil.rmtree(path, ignore_errors=True)
 
     def getlink(self):
         return self.current.link if self.current else None
 
-    async def next(self, correct=True):
-        if self.queue.qsize() < QUEUE_SIZE and (self.refill_task is None or self.refill_task.done()):
-            self.refill_task = asyncio.create_task(self.refill())
+    async def next(self):
+        if not self.song_ids and self.queue.empty() and not self.refill_lock.locked():
+            
+            return False
+        if self.song_ids and self.queue.qsize() < QUEUE_SIZE:
+            if not self.refill_lock.locked():
+                self.refill_task = asyncio.create_task(self.refill())
         try:
-            self.current = await asyncio.wait_for(self.queue.get(), timeout=99)
+            self.current = await asyncio.wait_for(self.queue.get(), timeout=20)
         except asyncio.TimeoutError:
             print("no songs?")
-            return None
+            return False
 
         self.count += 1
         print(f"{self.count}: {self.get_ans()}")
-        return self.getlink()
+        
+        file_path = self.getlink()
+        cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration","-of", "default=noprint_wrappers=1:nokey=1", file_path]
+        duration = float(subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).stdout)
+        start_time = random.uniform(0, max(duration - 45, 0))
+        source = FFmpegOpusAudio(file_path,
+                                 before_options=f'-ss {start_time}',
+                                 options='-vn -af "loudnorm=I=-20:TP=-1.5:LRA=11"')
+
+        if self.vc.is_playing():self.vc.stop()
+        self.vc.play(source,)
+        if self.trash:
+            try:os.remove(self.trash.pop(0))
+            except (PermissionError, FileNotFoundError):pass
+        return True
 
     def get_ans(self):
         cur = self.current
@@ -96,56 +128,39 @@ class Game:
                                  for f in os.listdir(directory)
                                  if f.endswith(".mp3")),
                                 key=os.path.getmtime,)
-        cache_files = deque(existing_files)
-        queue_files = set()
-        tmp_queue = []
 
-        while not self.queue.empty():
-            item = await self.queue.get()
-            queue_files.add(item.link)
-            tmp_queue.append(item)
-
-        for item in tmp_queue:
-            await self.queue.put(item)
-
-        while len(cache_files) > CACHE_SIZE:
-            file_to_remove = cache_files.popleft()
-            if file_to_remove not in queue_files:
-                try:
-                    os.remove(file_to_remove)
-                except FileNotFoundError:
-                    pass
-            else:
-                cache_files.append(file_to_remove)
+        while len(existing_files) > CACHE_SIZE:
+            file_to_remove = existing_files.pop(0)
+            try:
+                os.remove(file_to_remove)
+            except FileNotFoundError:
+                pass
 
     async def refill(self):
-        await self.clear_cache()
-        ids = []
-        while self.song_ids and len(ids) < QUEUE_SIZE:
-            ids.append(self.song_ids.popleft())
+        async with self.refill_lock:
+            await self.clear_cache()
+            ids = []
+            while self.song_ids and len(ids) < QUEUE_SIZE:
+                ids.append(self.song_ids.popleft())
+            if not ids:return False
 
-        if not ids:
-            return
+            rows = db.fetch_from_amq_song_id(ids)
+            self.prepare_alt_names(rows)
 
-        rows = db.fetch_from_ann_song_id(ids)
-        self.prepare_alt_names(rows)
-
-        for row in rows:
-            try:
-                file_path = await self.download_audio(row[1])
-                round_obj = self.make_round((row[0], file_path, *row[2:]))
-                await self.queue.put(round_obj)
-            except Exception as e:
-                print(f"download failed: {row[0]}", e)
+            for row in rows:
+                try:
+                    file_path = await self.download_audio(row[1])
+                    round_obj = self.make_round((row[0], file_path, *row[2:]))
+                    await self.queue.put(round_obj)
+                    print(row[0])
+                except Exception as e:
+                    print(f"download failed: {row[0]}", e)
 
     async def download_audio(self, url):
         directory = f"{CACHE_DIR}/{self.server_id}"
         os.makedirs(directory, exist_ok=True)
 
         file_path = f"{directory}/{url}"
-
-        if os.path.exists(file_path):
-            return file_path
 
         async with aiohttp.ClientSession() as session:
             async with session.get(HEADER + url) as resp:
@@ -155,13 +170,11 @@ class Game:
                 with open(file_path, "wb") as f:
                     async for chunk in resp.content.iter_chunked(8192):
                         f.write(chunk)
-                print("downloaded "+ url)
 
         return file_path
 
     def prepare_alt_names(self, rows):
         pass
-
 
 class GameAnime(Game):
     def prepare_alt_names(self, rows):
@@ -226,13 +239,10 @@ class GameSA(Game):
 
         return r
 
-
 class GameTrain(GameSA):
     def __init__(self, player_id, server_id):
-        self.skip_a = False
         self.count = 0
         self.score = 0
-        self.error = 0
         self.player_id = player_id
         self.server_id = server_id
         self.song_ids = deque()
@@ -276,4 +286,4 @@ class GameTrain(GameSA):
         print(f"{self.count}: [{self.current.link}] {self.get_ans()}")
         return self.current.link
 
-gamemode = {"anime":GameAnime,"sa":GameSA,"train":GameTrain}
+game = {"Anime":GameAnime,"Song/Artist":GameSA,"Train":GameTrain}
