@@ -85,7 +85,7 @@ class Game:
     def getlink(self):
         return self.current.link if self.current else None
 
-    async def next(self,correct):
+    async def next(self,correct = False):
         if not self.song_ids and self.queue.empty() and not self.refill_lock.locked():
             
             return False
