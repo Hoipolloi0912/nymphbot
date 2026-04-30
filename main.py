@@ -143,11 +143,10 @@ async def amq_practice(interaction:discord.Interaction):
         if not db.list_check(interaction.user.id):
             await interaction.response.send_message("No active songs found. Run `/update` to import your list first.",ephemeral=True)
             return
-        vc = await _amq(interaction)
-        if not vc:return
+        await _amq(interaction)
         await interaction.response.send_message("starting practice mode")
 
-        games[interaction.guild.id] = game["Train"](interaction.user.id,interaction.guild.id)
+        games[interaction.guild.id] = game["Train"](interaction.user.id,interaction.guild.id,interaction.user.voice.channel)
         await games[interaction.guild.id].start()
 
 @amq_group.command(name="anime-list", description="play songs from your anime list")
@@ -319,9 +318,6 @@ async def _amq(interaction: discord.Interaction):
     if interaction.guild.id in games:
         await interaction.response.send_message("game already in progress", ephemeral=True)
         return None
-    vc = get(bot.voice_clients, guild__id=interaction.guild.id)
-    if vc and vc.channel != interaction.user.voice.channel:await vc.disconnect()
-    return await interaction.user.voice.channel.connect()
 
 async def song_autocomplete(interaction, current: str):
     suggestions = []

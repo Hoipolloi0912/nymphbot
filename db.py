@@ -123,9 +123,10 @@ def get_amq_song_ids_from_anime_ids(website: str, anime_ids: list[int]) -> list[
 def get_amq_song_ids_from_user_ids(user_ids,limit):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT amq_song_id
-            FROM user_song
+            SELECT a.amq_song_id
+            FROM user_song a join anison b ON a.amq_song_id = b.amq_song_id
             WHERE discord_id = ANY(%s)
+            AND b.link IS NOT NULL AND b.dub IS FALSE AND b.rebroad IS FALSE
             AND is_active = TRUE
             GROUP BY amq_song_id
             ORDER BY RANDOM()
