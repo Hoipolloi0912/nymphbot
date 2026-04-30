@@ -128,7 +128,7 @@ def get_amq_song_ids_from_user_ids(user_ids,limit):
             WHERE discord_id = ANY(%s)
             AND b.link IS NOT NULL AND b.dub IS FALSE AND b.rebroad IS FALSE
             AND is_active = TRUE
-            GROUP BY amq_song_id
+            GROUP BY a.amq_song_id
             ORDER BY RANDOM()
             LIMIT %s""",(user_ids,limit))
         return [row[0] for row in cur.fetchall()]
