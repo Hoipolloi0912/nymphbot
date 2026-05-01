@@ -90,13 +90,13 @@ async def user_update(interaction: discord.Interaction,
                       dropped: bool = False):
     anime_ids = get_list[website](name,[watching,completed,planning,paused,dropped])
     song_ids = db.get_amq_song_ids_from_anime_ids(website, anime_ids)
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(thinking=True,ephemeral= True)
     db.upsert_user_song_list(interaction.user.id, song_ids)
-    await interaction.followup.send(f"updating list to {len(song_ids)} song(s)", ephemeral=True)
+    await interaction.followup.send(f"adding {len(song_ids)} songs to your list", ephemeral=True)
 
 @amq_group.command(name="clear", description="clear your list")
 async def user_update(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(thinking=True,ephemeral= True)
     db.deactivate_songs(interaction.user.id,)
     await interaction.followup.send(f"cleared list", ephemeral=True)
 
