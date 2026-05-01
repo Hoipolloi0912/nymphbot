@@ -76,7 +76,7 @@ async def amq_init(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed,view=view)
     lobbies[interaction.guild.id].message = await interaction.original_response()
 
-@amq_group.command(name="update list", description="update user's anime list")
+@amq_group.command(name="update", description="update user's anime list")
 @app_commands.describe(name="list username")
 @app_commands.choices(website=[app_commands.Choice(name="anilist",value="anilist"),
                                app_commands.Choice(name="myanimelist",value="mal")])
@@ -94,7 +94,7 @@ async def user_update(interaction: discord.Interaction,
     db.upsert_user_song_list(interaction.user.id, song_ids)
     await interaction.followup.send(f"updating list to {len(song_ids)} song(s)", ephemeral=True)
 
-@amq_group.command(name="clear list", description="clear your list")
+@amq_group.command(name="clear", description="clear your list")
 async def user_update(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     db.deactivate_songs(interaction.user.id,)
