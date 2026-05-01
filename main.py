@@ -88,9 +88,9 @@ async def user_update(interaction: discord.Interaction,
                       planning: bool = False,
                       paused: bool = False,
                       dropped: bool = False):
+    await interaction.response.defer(thinking=True,ephemeral= True)
     anime_ids = get_list[website](name,[watching,completed,planning,paused,dropped])
     song_ids = db.get_amq_song_ids_from_anime_ids(website, anime_ids)
-    await interaction.response.defer(thinking=True,ephemeral= True)
     db.upsert_user_song_list(interaction.user.id, song_ids)
     await interaction.followup.send(f"adding {len(song_ids)} songs to your list", ephemeral=True)
 

@@ -87,7 +87,6 @@ class Game:
 
     async def next(self,correct = False):
         if not self.song_ids and self.queue.empty() and not self.refill_lock.locked():
-            
             return False
         if self.song_ids and self.queue.qsize() < QUEUE_SIZE:
             if not self.refill_lock.locked():
@@ -155,6 +154,7 @@ class Game:
                     print(row[0])
                 except Exception as e:
                     print(f"download failed: {row[0]}", e)
+        return True
 
     async def download_audio(self, url):
         directory = f"{CACHE_DIR}/{self.server_id}"
@@ -241,13 +241,14 @@ class GameSA(Game):
 
 class GameTrain(GameSA):
     def __init__(self, player_id, server_id, vc):
+        self.skip_a = False
         self.count = 0
         self.score = 0
         self.player_id = player_id
         self.server_id = server_id
         self.vc = vc
         self.trash = []
-        self.song_ids = deque()
+        self.song_ids = deque([1])
         self.queue = asyncio.Queue()
         self.refill_lock = asyncio.Lock()
         self.current = None
@@ -270,6 +271,18 @@ class GameTrain(GameSA):
 
                 except Exception as e:
                     print(f"download failed: {row[0]}",e)
+        return True
+
+    async def start(self):
+        self.vc = await self.vc.connect()
+        if not self.refill_lock.locked():
+            self.refill_task = asyncio.create_task(self.refill())
+        try:
+            self.current = await asyncio.wait_for(self.queue.get(), timeout=20)
+        except asyncio.TimeoutError:
+            print("no songs?")
+            return False
+        return await self.next()
 
     async def next(self, correct=True):
         if self.current:
