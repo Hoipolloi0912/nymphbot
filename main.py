@@ -213,7 +213,7 @@ async def s(ctx):
         return
     async with lock:
         if ctx.guild.id in games and games[ctx.guild.id].current:
-            await ctx.send(f"{games[ctx.guild.id].count}: {games[ctx.guild.id].get_ans()}")
+            await ctx.send(f"{games[ctx.guild.id].count}: `{games[ctx.guild.id].get_ans()}`")
             if not await games[ctx.guild.id].next(False):
                 await ctx.send(f"{games[ctx.guild.id].score}/{games[ctx.guild.id].count}")
                 await terminate(ctx.guild.id)
@@ -241,7 +241,7 @@ async def on_message(message):
         async with lock:
             state = games[message.guild.id].check(message.content)
             if state == 1:
-                await message.channel.send(f"{games[message.guild.id].count}: ✅ {games[message.guild.id].get_ans()}")
+                await message.channel.send(f"{games[message.guild.id].count}: ✅ `{games[message.guild.id].get_ans()}`")
                 vc = get(bot.voice_clients, guild__id=message.guild.id)
                 if vc:
                     if not await games[message.guild.id].next(True):
