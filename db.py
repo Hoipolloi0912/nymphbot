@@ -24,9 +24,22 @@ def get_random_links(count):
         """, (count,))
         return [row[0] for row in cur.fetchall()]
 
-
-def upsert_user(discord_id: int):
+def deactivate_songs(discord_id: int):
     with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            DELETE FROM user_song
+            WHERE discord_id = %s
+            AND total_reviews = 0
+        """, (discord_id,))
+        cur.execute("""
+            UPDATE user_song
+            SET is_active = FALSE
+            WHERE discord_id = %s
+        """, (discord_id,))        
+    
+def upsert_user_song_list(discord_id: int, song_ids: list[int]):
+    with get_conn() as conn, conn.cursor() as cur:
+        #add user
         cur.execute("""
             INSERT INTO users (discord_id)
             VALUES (%s)
@@ -34,34 +47,15 @@ def upsert_user(discord_id: int):
             DO UPDATE SET
                 date_updated = NOW();
         """, (discord_id,))
-
-def deactivate_old_songs(discord_id: int, song_ids: list[int]):
-    # If song_ids is empty, deactivate everything
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("""
-            DELETE FROM user_song
-            WHERE discord_id = %s
-              AND total_reviews = 0
-        """, (discord_id,))
-        cur.execute("""
-            UPDATE user_song
-            SET is_active = FALSE
-            WHERE discord_id = %s
-              AND NOT (amq_song_id = ANY(%s::BIGINT[]))
-        """, (discord_id, song_ids))
-
-def get_current_round(discord_id: int) -> int:
-    with get_conn() as conn, conn.cursor() as cur:
+        #fetch current round
         cur.execute("""
             SELECT current_round
             FROM users
             WHERE discord_id = %s
         """, (discord_id,))
         row = cur.fetchone()
-        return row[0] if row else 0
-    
-def upsert_user_song_list(discord_id: int, song_ids: list[int], current_round: int):
-    with get_conn() as conn, conn.cursor() as cur:
+        current_round = row[0] if row else 0
+        #add songs
         cur.execute("""
             INSERT INTO user_song (
                 discord_id,
@@ -125,7 +119,7 @@ def get_amq_song_ids_from_user_ids(user_ids,limit):
         cur.execute("""
             SELECT a.amq_song_id
             FROM user_song a join anison b ON a.amq_song_id = b.amq_song_id
-            WHERE discord_id = ANY(%s)
+            WHERE a.discord_id = ANY(%s)
             AND b.link IS NOT NULL AND b.dub IS FALSE AND b.rebroad IS FALSE
             AND is_active = TRUE
             GROUP BY a.amq_song_id

@@ -77,7 +77,7 @@ async def amq_init(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed,view=view)
     lobbies[interaction.guild.id].message = await interaction.original_response()
 
-@amq_group.command(name="update", description="update user's anime list")
+@amq_group.command(name="update list", description="update user's anime list")
 @app_commands.describe(name="list username")
 @app_commands.choices(website=[app_commands.Choice(name="anilist",value="anilist"),
                                app_commands.Choice(name="myanimelist",value="mal")])
@@ -91,14 +91,15 @@ async def user_update(interaction: discord.Interaction,
                       dropped: bool = False):
     anime_ids = get_list[website](name,[watching,completed,planning,paused,dropped])
     song_ids = db.get_amq_song_ids_from_anime_ids(website, anime_ids)
-    await interaction.response.send_message(f"updating list to {len(song_ids)} song(s)", ephemeral=True)
+    await interaction.response.defer(thinking=True)
+    db.upsert_user_song_list(interaction.user.id, song_ids)
+    await interaction.followup.send(f"updating list to {len(song_ids)} song(s)", ephemeral=True)
 
-    db.upsert_user(interaction.user.id)
-    db.deactivate_old_songs(interaction.user.id, song_ids)
-    current_round = db.get_current_round(interaction.user.id)
-    db.upsert_user_song_list(interaction.user.id, song_ids, current_round)
-
-    await interaction.followup.send(f"update sucessful.", ephemeral=True)
+@amq_group.command(name="clear list", description="clear your list")
+async def user_update(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    db.deactivate_songs(interaction.user.id,)
+    await interaction.followup.send(f"cleared list", ephemeral=True)
 
 @amq_group.command(name="test",description="check current download speed")
 async def amq_test(interaction: discord.Interaction):
