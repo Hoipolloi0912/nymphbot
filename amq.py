@@ -129,25 +129,8 @@ class Game:
         cur = self.current
         return f"[{cur.id}] {cur.sn} by {cur.a} from {cur.jp or cur.en}"
 
-    async def clear_cache(self):
-        directory = f"{CACHE_DIR}/{self.server_id}"
-        os.makedirs(directory, exist_ok=True)
-
-        existing_files = sorted((os.path.join(directory, f)
-                                 for f in os.listdir(directory)
-                                 if f.endswith(".mp3")),
-                                key=os.path.getmtime,)
-
-        while len(existing_files) > CACHE_SIZE:
-            file_to_remove = existing_files.pop(0)
-            try:
-                os.remove(file_to_remove)
-            except FileNotFoundError:
-                pass
-
     async def refill(self):
         async with self.refill_lock:
-            await self.clear_cache()
             ids = []
             while self.songs and len(ids) < QUEUE_SIZE:
                 ids.append(self.songs.popleft())
@@ -265,7 +248,6 @@ class GameTrain(GameSA):
 
     async def refill(self):
         async with self.refill_lock:
-            await self.clear_cache()
             rows = db.fetch_songs_srs(self.player_id, QUEUE_SIZE)
             if not rows:
                 return False
