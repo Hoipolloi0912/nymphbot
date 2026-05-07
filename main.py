@@ -10,7 +10,7 @@ import db
 import random
 import time
 import aiohttp
-import cache_autofill
+from cache_autofill import update_autofill
 from lobby import *
 
 load_dotenv()
@@ -18,42 +18,16 @@ API_TOKEN = os.getenv("API_TOKEN")
 GUILD_IDS = [discord.Object(id=int(gid.strip())) for gid in os.getenv("GUILD_IDS", "").split(",")]
 HEADER = "https://naedist.animemusicquiz.com/"
 DB_URL=os.getenv('DB_URL')
-TEST_DURATION = 10
-CHUNK_SIZE = 64 * 1024
-CACHE_DIR = "cache"
-os.makedirs(CACHE_DIR, exist_ok=True)
-cache_autofill.make_anime_json()
-cache_autofill.make_artist_json()
-cache_autofill.make_song_json()
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 lobbies = {}
 guild_locks = defaultdict(asyncio.Lock)
-conn = None
-amq_group = app_commands.Group(name="amq", description="start a game of amq")
+amq_group = app_commands.Group(name="amq", description="play anime music quiz")
 anime_dict = get_anime_dict()
 artist_dict = get_artist_dict()
 song_dict = get_song_dict()
-
-def get_cursor():
-    global conn
-    if not conn:
-        conn=psycopg.connect(DB_URL)
-    try: return conn.cursor()
-    except psycopg.OperationalError:
-        conn=psycopg.connect(DB_URL)
-        return conn.cursor()
-    
-def get_conn():
-    global conn
-    if not conn:
-        conn=psycopg.connect(DB_URL)
-    try: return conn
-    except psycopg.OperationalError:
-        conn=psycopg.connect(DB_URL)
-        return conn
 
 @bot.event
 async def on_ready():
@@ -101,10 +75,11 @@ async def user_update(interaction: discord.Interaction):
     await interaction.followup.send(f"cleared list", ephemeral=True)
 
 @amq_group.command(name="test",description="check current download speed")
-async def amq_test(interaction: discord.Interaction):
+async def amq_test(interaction: discord.Interaction,MAX_DURATION = 10,MAX_MB = 100,CHUNK_SIZE = 64*1024):
     await interaction.response.defer(thinking=True)
-    links = db.get_random_links(10)
+    links = db.get_random_links(100)
     downloaded = 0
+    max_bytes = MAX_MB *1024 *1024
     start_time = time.time()
     timeout = aiohttp.ClientTimeout(total=None)
     count = 0
@@ -113,25 +88,23 @@ async def amq_test(interaction: discord.Interaction):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
                 for link in links:
+                    if time.time() - start_time >= MAX_DURATION or downloaded >= max_bytes:break
                     url = f"{HEADER}{link}?nocache={random.randint(1,999999)}"
                     async with session.get(url) as resp:
                         if resp.status != 200:continue
                         async for chunk in resp.content.iter_chunked(CHUNK_SIZE):
+                            if time.time() - start_time >= MAX_DURATION or downloaded >= max_bytes:break
                             downloaded += len(chunk)
-                            elapsed = time.time() - start_time
-                            if elapsed >= TEST_DURATION: break
-                    if time.time() - start_time >= TEST_DURATION:break
                     count +=1
-                if time.time() - start_time >= TEST_DURATION:break
 
-        elapsed = time.time() - start_time
-        speed_bps = downloaded / elapsed
+        speed_bps = downloaded / (time.time() - start_time)
         speed_mbps = speed_bps / (1024 * 1024)
 
         await interaction.followup.send(f"Downloaded: {count} files at {speed_mbps:.2f} MB/s")
 
     except Exception as e:
-        await interaction.followup.send(f"❌ Speed test failed:\n`{e}`")
+        await interaction.followup.send(f"Speed test failed")
+        print(e)
 
 @amq_group.command(name="practice", description="training mode")
 async def amq_practice(interaction:discord.Interaction):
@@ -154,7 +127,7 @@ async def amq_practice(interaction:discord.Interaction):
         games[interaction.guild.id] = game["Train"](interaction.user.id,interaction.guild.id,interaction.user.voice.channel)
         await games[interaction.guild.id].start()
 
-async def artist_autocomplete(interaction, current: str):
+async def artist_autocomplete(current: str):
     suggestions = []
     current =current.lower()
     for id, name in artist_dict.items():
@@ -165,7 +138,7 @@ async def artist_autocomplete(interaction, current: str):
             break
     return suggestions
 
-async def song_autocomplete(interaction, current: str):
+async def song_autocomplete(current: str):
     suggestions = []
     current =current.lower()
     for id, names in song_dict.items():
@@ -259,4 +232,5 @@ async def on_command_error(ctx, error):
 
 if __name__ == "__main__":
     load_dotenv()
+    update_autofill()
     bot.run(API_TOKEN)
