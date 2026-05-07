@@ -89,8 +89,10 @@ class Game:
         self.wrongs.append(self.current)
 
     async def next(self,correct = True):
-        if self.current and not correct:
-            self.append_wrong()
+        if self.current:
+            prev = self.current
+            if not correct:
+                self.append_wrong()
         if not self.songs and self.queue.empty() and not self.refill_lock.locked():
             if self.wrongs:
                 for item in self.wrongs:
@@ -117,6 +119,10 @@ class Game:
                                  options='-vn -af "loudnorm=I=-20:TP=-1.5:LRA=11"')
 
         if self.vc.is_playing():self.vc.stop()
+        try:
+            os.remove(prev.link)
+        except FileNotFoundError:
+            pass
         self.vc.play(source,)
 
     def get_ans(self):
@@ -141,9 +147,7 @@ class Game:
 
     async def refill(self):
         async with self.refill_lock:
-            print('a')
             await self.clear_cache()
-            print('b')
             ids = []
             while self.songs and len(ids) < QUEUE_SIZE:
                 ids.append(self.songs.popleft())
