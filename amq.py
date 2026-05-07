@@ -92,7 +92,7 @@ class Game:
         if self.current and not correct:
             self.append_wrong()
         if not self.songs and self.queue.empty() and not self.refill_lock.locked():
-            if not self.wrongs:
+            if self.wrongs:
                 for item in self.wrongs:
                     await self.queue.put(item)
             else: return False
@@ -141,7 +141,9 @@ class Game:
 
     async def refill(self):
         async with self.refill_lock:
+            print('a')
             await self.clear_cache()
+            print('b')
             ids = []
             while self.songs and len(ids) < QUEUE_SIZE:
                 ids.append(self.songs.popleft())
@@ -155,7 +157,6 @@ class Game:
                     file_path = await self.download_audio(row[1])
                     round_obj = self.make_round((row[0], file_path, *row[2:]))
                     await self.queue.put(round_obj)
-                    print(row[0])
                 except Exception as e:
                     print(f"download failed: {row[0]}", e)
         return True
@@ -218,9 +219,6 @@ class GameSA(Game):
 
     def make_round(self, row):
         return Round(*row[:6],Tree(row[6], self.alt_names))
-    
-    def append_wrong(self):
-        pass
 
     def check(self, a):
         a = clean(a)
@@ -297,5 +295,8 @@ class GameTrain(GameSA):
             else: db.update_srs_wrong(self.player_id,self.current.id)
 
         return await super().next()
+    
+    def append_wrong(self):
+        pass
 
 game = {"Anime":GameAnime,"Song/Artist":GameSA,"Train":GameTrain}
