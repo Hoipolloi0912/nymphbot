@@ -74,8 +74,11 @@ async def user_update(interaction: discord.Interaction):
     await interaction.followup.send(f"cleared list", ephemeral=True)
 
 @amq_group.command(name="test",description="check current download speed")
-async def amq_test(interaction: discord.Interaction,MAX_DURATION = 10,MAX_MB = 100,CHUNK_SIZE = 64*1024):
+async def amq_test(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
+    MAX_DURATION = 10
+    MAX_MB = 100
+    CHUNK_SIZE = 64*1024
     links = db.get_random_links(100)
     downloaded = 0
     max_bytes = MAX_MB *1024 *1024
