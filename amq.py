@@ -89,6 +89,7 @@ class Game:
         self.wrongs.append(self.current)
 
     async def next(self,correct = True):
+        prev = None
         if self.current:
             prev = self.current
             if not correct:
@@ -119,10 +120,11 @@ class Game:
                                  options='-vn -af "loudnorm=I=-20:TP=-1.5:LRA=11"')
 
         if self.vc.is_playing():self.vc.stop()
-        try:
-            os.remove(prev.link)
-        except FileNotFoundError:
-            pass
+        if prev:
+            try:
+                os.remove(prev.link)
+            except FileNotFoundError:
+                pass
         self.vc.play(source,)
 
     def get_ans(self):
