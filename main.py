@@ -129,27 +129,22 @@ async def amq_practice(interaction:discord.Interaction):
         games[interaction.guild.id] = game["Train"](interaction.user.id,interaction.guild.id,interaction.user.voice.channel)
         await games[interaction.guild.id].start()
 
-async def artist_autocomplete(current: str):
-    suggestions = []
-    current =current.lower()
-    for id, name in artist_dict.items():
-        if current in name.lower():
-            label = f"{id} : {name}"
-            suggestions.append(app_commands.Choice(name=label[:100], value=id))
-        if len(suggestions) >= 25:
-            break
-    return suggestions
+def load_autocomplete(data, label_func, search_func=None):
+    async def autocomplete(interaction: discord.Interaction,current: str):
+        suggestions = []
+        current = current.lower()
+        for id, value in data.items():
+            target = (search_func(value) if search_func else str(value))
+            if current in target.lower():
+                label = label_func(id, value)
+                suggestions.append(app_commands.Choice(name=label[:100],value=id))
+            if len(suggestions) >= 25: break
+        return suggestions
+    return autocomplete
 
-async def song_autocomplete(current: str):
-    suggestions = []
-    current =current.lower()
-    for id, names in song_dict.items():
-        if current in names[0].lower():
-            label = f"{id} : {names[0]} by {names[1]}"
-            suggestions.append(app_commands.Choice(name=label[:100], value=id))
-        if len(suggestions) >= 25:
-            break
-    return suggestions
+anime_autocomplete = load_autocomplete(anime_dict,lambda id, name: f"{id} : {name}")
+artist_autocomplete = load_autocomplete(artist_dict,lambda id, name: f"{id} : {name}")
+song_autocomplete = load_autocomplete(song_dict,lambda id, names: f"{id} : {names[0]} by {names[1]}",lambda names: names[0])
 
 @amq_group.command(name="split-info", description="get full artist info of a song")
 @app_commands.describe(name="song name")
