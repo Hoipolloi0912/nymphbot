@@ -6,6 +6,7 @@ import os
 load_dotenv()
 DB_URL = os.getenv("DB_URL")
 PATH = "cache"
+os.makedirs(PATH, exist_ok=True)
 
 def make_anime_json():
     with psycopg.connect(DB_URL) as conn:
@@ -61,9 +62,3 @@ def get_anime_dict():
 def get_song_dict():
     with open(f"{PATH}/song_map.json","r", encoding="utf-8") as f:
         return json.load(f)
-
-def update_autofill():
-    os.makedirs(PATH, exist_ok=True)
-    make_anime_json()
-    make_artist_json()
-    make_song_json()
