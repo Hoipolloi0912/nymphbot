@@ -74,6 +74,8 @@ class Game:
     
     async def start(self):
         self.vc = await self.vc.connect()
+        if self.queue.empty() and self.songs:
+            await self.refill()
         return await self.next()
 
     async def end(self):
@@ -120,12 +122,13 @@ class Game:
                                  options='-vn -af "loudnorm=I=-20:TP=-1.5:LRA=11"')
 
         if self.vc.is_playing():self.vc.stop()
+        self.vc.play(source,)
         if prev:
             try:
                 os.remove(prev.link)
             except FileNotFoundError:
                 pass
-        self.vc.play(source,)
+        return True
 
     def get_ans(self):
         cur = self.current
@@ -265,17 +268,6 @@ class GameTrain(GameSA):
                 except Exception as e:
                     print(f"download failed: {row[0]}",e)
         return True
-
-    async def start(self):
-        self.vc = await self.vc.connect()
-        if not self.refill_lock.locked():
-            self.refill_task = asyncio.create_task(self.refill())
-        try:
-            self.current = await asyncio.wait_for(self.queue.get(), timeout=20)
-        except asyncio.TimeoutError:
-            print("no songs?")
-            return False
-        return await self.next()
 
     async def next(self, correct=True):
         if self.current:
