@@ -10,7 +10,6 @@ import db
 import random
 import time
 import aiohttp
-from cache_autofill import update_autofill
 from lobby import *
 
 load_dotenv()
@@ -232,5 +231,4 @@ async def on_command_error(ctx, error):
 
 if __name__ == "__main__":
     load_dotenv()
-    update_autofill()
     bot.run(API_TOKEN)
