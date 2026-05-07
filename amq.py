@@ -7,7 +7,6 @@ import asyncio
 import subprocess
 import random
 import shutil
-import copy
 from collections import deque
 from discord import FFmpegOpusAudio
 
@@ -89,9 +88,7 @@ class Game:
         return self.current.link if self.current else None
     
     def append_wrong(self):
-        temp = copy.deepcopy(self.current)
-        temp.link = os.path.basename(temp.link)
-        self.wrongs.append(temp)
+        self.wrongs.append(self.current.id)
 
     async def next(self,correct = True):
         prev = None
@@ -102,6 +99,7 @@ class Game:
         if not self.songs and self.queue.empty() and not self.refill_lock.locked():
             if self.wrongs:
                 self.songs.extend(self.wrongs)
+                self.wrongs.clear()
             else: return False
         if self.songs and self.queue.qsize() < QUEUE_SIZE:
             if not self.refill_lock.locked():
