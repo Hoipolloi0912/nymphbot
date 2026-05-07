@@ -98,7 +98,9 @@ class Game:
                 self.append_wrong()
         if not self.songs and self.queue.empty() and not self.refill_lock.locked():
             if self.wrongs:
-                self.songs.extend(self.wrongs)
+                temp = list(self.wrongs)
+                random.shuffle(temp)
+                self.songs.extend(temp)
                 self.wrongs.clear()
             else: return False
         if self.songs and self.queue.qsize() < QUEUE_SIZE:
