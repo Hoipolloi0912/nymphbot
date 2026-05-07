@@ -63,14 +63,14 @@ class Game:
         self.skip_a = False
         self.count = 0
         self.score = 0
-        self.song_ids = deque(db.get_amq_song_ids_from_user_ids(list(settings.players),settings.rounds))
+        self.songs = deque(db.get_amq_song_ids_from_user_ids(list(settings.players),settings.rounds))
         self.queue = asyncio.Queue()
+        self.wrongs = deque()
         self.refill_lock = asyncio.Lock()
         self.current = None
         self.alt_names = {}
         self.server_id = settings.guild.id
         self.vc = settings.vc
-        self.trash = []
     
     async def start(self):
         self.vc = await self.vc.connect()
@@ -84,11 +84,19 @@ class Game:
 
     def getlink(self):
         return self.current.link if self.current else None
+    
+    def append_wrong(self):
+        self.wrongs.append(self.current)
 
-    async def next(self,correct = False):
-        if not self.song_ids and self.queue.empty() and not self.refill_lock.locked():
-            return False
-        if self.song_ids and self.queue.qsize() < QUEUE_SIZE:
+    async def next(self,correct = True):
+        if self.current and not correct:
+            self.append_wrong()
+        if not self.songs and self.queue.empty() and not self.refill_lock.locked():
+            if not self.wrongs:
+                for item in self.wrongs:
+                    await self.queue.put(item)
+            else: return False
+        if self.songs and self.queue.qsize() < QUEUE_SIZE:
             if not self.refill_lock.locked():
                 self.refill_task = asyncio.create_task(self.refill())
         try:
@@ -110,10 +118,6 @@ class Game:
 
         if self.vc.is_playing():self.vc.stop()
         self.vc.play(source,)
-        if self.trash:
-            try:os.remove(self.trash.pop(0))
-            except (PermissionError, FileNotFoundError):pass
-        return True
 
     def get_ans(self):
         cur = self.current
@@ -139,8 +143,8 @@ class Game:
         async with self.refill_lock:
             await self.clear_cache()
             ids = []
-            while self.song_ids and len(ids) < QUEUE_SIZE:
-                ids.append(self.song_ids.popleft())
+            while self.songs and len(ids) < QUEUE_SIZE:
+                ids.append(self.songs.popleft())
             if not ids:return False
 
             rows = db.fetch_from_amq_song_id(ids)
@@ -214,6 +218,9 @@ class GameSA(Game):
 
     def make_round(self, row):
         return Round(*row[:6],Tree(row[6], self.alt_names))
+    
+    def append_wrong(self):
+        pass
 
     def check(self, a):
         a = clean(a)
@@ -247,9 +254,9 @@ class GameTrain(GameSA):
         self.player_id = player_id
         self.server_id = server_id
         self.vc = vc
-        self.trash = []
-        self.song_ids = deque([1])
+        self.songs = True
         self.queue = asyncio.Queue()
+        self.wrongs = deque()
         self.refill_lock = asyncio.Lock()
         self.current = None
         self.alt_names = {}
