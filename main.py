@@ -98,6 +98,7 @@ async def amq_test(interaction: discord.Interaction):
                             if time.time() - start_time >= MAX_DURATION or downloaded >= max_bytes:break
                             downloaded += len(chunk)
                     count +=1
+                if time.time() - start_time >= MAX_DURATION or downloaded >= max_bytes:break
 
         speed_bps = downloaded / (time.time() - start_time)
         speed_mbps = speed_bps / (1024 * 1024)
