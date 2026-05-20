@@ -78,9 +78,11 @@ class Game:
         return await self.next()
 
     async def end(self):
+        if self.vc.is_playing():self.vc.stop()
         await self.vc.disconnect()
         if self.refill_task and not self.refill_task.done():
             self.refill_task.cancel()
+        await asyncio.sleep(0.2)
         path = f"{CACHE_DIR}/{self.server_id}"
         if path and os.path.exists(path):
             shutil.rmtree(path, ignore_errors=True)
@@ -125,12 +127,10 @@ class Game:
                                  options='-vn -af "loudnorm=I=-20:TP=-1.5:LRA=11"')
 
         if self.vc.is_playing():self.vc.stop()
-        self.vc.play(source,)
-        if prev:
-            try:
+        def after(error):
+            if prev:
                 os.remove(prev.link)
-            except FileNotFoundError:
-                pass
+        self.vc.play(source,after=after)
         return True
 
     def get_ans(self):
