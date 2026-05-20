@@ -67,6 +67,7 @@ class Game:
         self.queue = asyncio.Queue()
         self.wrongs = deque()
         self.refill_lock = asyncio.Lock()
+        self.refill_task = None
         self.current = None
         self.alt_names = {}
         self.server_id = settings.guild.id
@@ -74,12 +75,12 @@ class Game:
     
     async def start(self):
         self.vc = await self.vc.connect()
-        if self.queue.empty() and self.songs:
-            await self.refill()
         return await self.next()
 
     async def end(self):
         await self.vc.disconnect()
+        if self.refill_task and not self.refill_task.done():
+            self.refill_task.cancel()
         path = f"{CACHE_DIR}/{self.server_id}"
         if path and os.path.exists(path):
             shutil.rmtree(path, ignore_errors=True)
@@ -137,23 +138,26 @@ class Game:
         return f"[{cur.id}] {cur.sn} by {cur.a} from {cur.jp or cur.en}"
 
     async def refill(self):
-        async with self.refill_lock:
-            ids = []
-            while self.songs and len(ids) < QUEUE_SIZE:
-                ids.append(self.songs.popleft())
-            if not ids:return False
+        try:
+            async with self.refill_lock:
+                ids = []
+                while self.songs and len(ids) < QUEUE_SIZE:
+                    ids.append(self.songs.popleft())
+                if not ids:return False
 
-            rows = db.fetch_from_amq_song_id(ids)
-            self.prepare_alt_names(rows)
+                rows = db.fetch_from_amq_song_id(ids)
+                self.prepare_alt_names(rows)
 
-            for row in rows:
-                try:
-                    file_path = await self.download_audio(row[1])
-                    round_obj = self.make_round((row[0], file_path, *row[2:]))
-                    await self.queue.put(round_obj)
-                except Exception as e:
-                    print(f"download failed: {row[0]}", e)
-        return True
+                for row in rows:
+                    try:
+                        file_path = await self.download_audio(row[1])
+                        round_obj = self.make_round((row[0], file_path, *row[2:]))
+                        await self.queue.put(round_obj)
+                    except Exception as e:
+                        print(f"download failed: {row[0]}", e)
+            return True
+        except asyncio.CancelledError:
+            print("download cancelled")
 
     async def download_audio(self, url):
         directory = f"{CACHE_DIR}/{self.server_id}"
@@ -235,7 +239,6 @@ class GameSA(Game):
             if all(cur.guessed):
                 self.score += 1
                 r = 1
-
         return r
 
 class GameTrain(GameSA):
@@ -250,6 +253,7 @@ class GameTrain(GameSA):
         self.queue = asyncio.Queue()
         self.wrongs = deque()
         self.refill_lock = asyncio.Lock()
+        self.refill_task = None
         self.current = None
         self.alt_names = {}
 
