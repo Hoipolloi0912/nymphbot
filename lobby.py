@@ -68,6 +68,7 @@ class LobbyView(discord.ui.View):
 
     @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary,row=2)
     async def start(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.lobby.rounds = 20
         await interaction.response.send_message("game starting...")
         await self.lobby.start()
 
@@ -83,6 +84,5 @@ class LobbyView(discord.ui.View):
             self.lobby.vc = interaction.user.voice.channel
         self.lobby.players = {interaction.user.id}
         self.lobby.mode = 0
-        self.lobby.rounds = 20
         await interaction.response.defer()
         await self.update_message()

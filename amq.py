@@ -62,6 +62,7 @@ class Game:
     def __init__(self, settings):
         self.skip_a = False
         self.count = 0
+        self.file_counter = 0
         self.score = 0
         self.songs = deque(db.get_amq_song_ids_from_user_ids(list(settings.players),settings.rounds))
         self.queue = asyncio.Queue()
@@ -110,7 +111,7 @@ class Game:
             if not self.refill_lock.locked():
                 self.refill_task = asyncio.create_task(self.refill())
         try:
-            self.current = await asyncio.wait_for(self.queue.get(), timeout=20)
+            self.current = await asyncio.wait_for(self.queue.get(), timeout=10)
         except asyncio.TimeoutError:
             print("no songs?")
             return False
@@ -121,16 +122,12 @@ class Game:
         file_path = self.getlink()
         cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration","-of", "default=noprint_wrappers=1:nokey=1", file_path]
         duration = float(subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).stdout)
-        start_time = random.uniform(0, max(duration - 45, 0))
+        start_time = random.uniform(0, max(duration - 30, 0))
         source = FFmpegOpusAudio(file_path,
                                  before_options=f'-ss {start_time}',
                                  options='-vn -af "loudnorm=I=-20:TP=-1.5:LRA=11"')
-
         if self.vc.is_playing():self.vc.stop()
-        def after(error):
-            if prev:
-                os.remove(prev.link)
-        self.vc.play(source,after=after)
+        self.vc.play(source,after=lambda error: os.remove(prev.link) if prev else None)
         return True
 
     def get_ans(self):
@@ -150,7 +147,8 @@ class Game:
 
                 for row in rows:
                     try:
-                        file_path = await self.download_audio(row[1])
+                        self.file_counter += 1
+                        file_path = await self.download_audio(row[1],self.file_counter)
                         round_obj = self.make_round((row[0], file_path, *row[2:]))
                         await self.queue.put(round_obj)
                     except Exception as e:
@@ -159,11 +157,12 @@ class Game:
         except asyncio.CancelledError:
             print("download cancelled")
 
-    async def download_audio(self, url):
+    async def download_audio(self, url, n):
         directory = f"{CACHE_DIR}/{self.server_id}"
         os.makedirs(directory, exist_ok=True)
+        ext = url.rsplit(".",1)[-1]
 
-        file_path = f"{directory}/{url}"
+        file_path = f"{directory}/{n:03d}.{ext}"
 
         async with aiohttp.ClientSession() as session:
             async with session.get(HEADER + url) as resp:
@@ -245,6 +244,7 @@ class GameTrain(GameSA):
     def __init__(self, player_id, server_id, vc):
         self.skip_a = False
         self.count = 0
+        self.file_counter = 0
         self.score = 0
         self.player_id = player_id
         self.server_id = server_id
@@ -267,7 +267,8 @@ class GameTrain(GameSA):
 
             for row in rows:
                 try:
-                    file_path = await self.download_audio(row[1])
+                    self.file_counter += 1
+                    file_path = await self.download_audio(row[1],self.file_counter)
                     round_obj = self.make_round((row[0], file_path, *row[2:]))
                     await self.queue.put(round_obj)
 
