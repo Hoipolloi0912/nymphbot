@@ -7,6 +7,7 @@ import asyncio
 import subprocess
 import random
 import shutil
+import unicodedata
 from collections import deque
 from discord import FFmpegOpusAudio
 
@@ -17,7 +18,10 @@ HEADER = "https://naedist.animemusicquiz.com/"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 def clean(s):
-    return re.sub(r'[^\x00-\x7F]+', '', s.replace(" ", ""))
+    s = s.replace(" ", "")
+    normalized = unicodedata.normalize('NFKD', s)
+    ascii_str = normalized.encode('ascii', 'ignore').decode('utf-8')
+    return re.sub(r'[^\x00-\x7F]+', '', ascii_str)
 
 class Tree:
     def __init__(self,root_id,data):
@@ -113,7 +117,7 @@ class Game:
         try:
             self.current = await asyncio.wait_for(self.queue.get(), timeout=10)
         except asyncio.TimeoutError:
-            print("no songs?")
+            print("download failed")
             return False
 
         self.count += 1
@@ -176,7 +180,7 @@ class Game:
         return file_path
 
     def prepare_alt_names(self, rows):
-        pass
+        raise NotImplementedError
 
 class GameAnime(Game):
     def prepare_alt_names(self, rows):
