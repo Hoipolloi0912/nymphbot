@@ -34,16 +34,17 @@ class Tree:
     
     def check(self,a):
         if self.guessed:return False
-        
+
         for name in self.names:
-            ans = [clean(name)]
-            if len(name.split(" ")) == 2:
-                ans.append(clean(" ".join(name.split(" ")[::-1])))
+            ans = [name]
+
             if "(" in name and ")" in name and name.index("(") < name.index(")"):
-                ans.append(name.split("(",1)[0])
-            if a in ans:
-                self.guessed = True
-                return True
+                ans.append(name.split("(", 1)[0].strip())
+
+            for an in ans:
+                if (a == clean(an) or len(an.split(" ")) == 2 and a == clean("".join(an.split(" ")[::-1]))):
+                    self.guessed = True
+                    return True
     
         members_completed = []
         matched = False
