@@ -34,9 +34,14 @@ class Tree:
     
     def check(self,a):
         if self.guessed:return False
-
-        for ans in self.names:
-            if a == clean(ans) or (len(ans.split(" ")) == 2 and a == clean(" ".join(ans.split(" ")[::-1]))):
+        
+        for name in self.names:
+            ans = [clean(name)]
+            if len(name.split(" ")) == 2:
+                ans.append(clean(" ".join(name.split(" ")[::-1])))
+            if "(" in name and ")" in name and name.index("(") < name.index(")"):
+                ans.append(name.split("(",1)[0])
+            if a in ans:
                 self.guessed = True
                 return True
     
