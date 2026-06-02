@@ -108,7 +108,7 @@ def get_amq_song_ids_from_anime_ids(website: str, anime_ids: list[int]) -> list[
             SELECT b.amq_song_id
             FROM anison b join anime a on b.anime_id = a.ann_id join song c on b.amq_song_id = c.amq_song_id
             WHERE a.{website}_id = ANY(%s::BIGINT[])
-            AND c.category != 2
+            AND c.category != 2 AND b.dub IS FALSE AND b.rebroad IS FALSE
             """,
             (anime_ids,)
         )
@@ -120,8 +120,7 @@ def get_amq_song_ids_from_user_ids(user_ids,limit):
             SELECT a.amq_song_id
             FROM user_song a join anison b ON a.amq_song_id = b.amq_song_id
             WHERE a.discord_id = ANY(%s)
-            AND b.link IS NOT NULL AND b.dub IS FALSE AND b.rebroad IS FALSE
-            AND is_active = TRUE
+            AND b.link IS NOT NULL AND is_active = TRUE
             GROUP BY a.amq_song_id
             ORDER BY RANDOM()
             LIMIT %s""",(user_ids,limit))
@@ -256,8 +255,6 @@ def fetch_songs_srs(player_id, limit):
                 JOIN users ur ON u.discord_id = ur.discord_id
                 WHERE u.discord_id = %s
                 AND u.is_active = TRUE
-                AND a.dub = FALSE
-                AND a.rebroad = FALSE
                 AND a.link IS NOT NULL
                 ORDER BY
                     u.discord_id,

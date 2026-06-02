@@ -82,10 +82,11 @@ class Game:
         self.current = None
         self.alt_names = {}
         self.server_id = settings.guild.id
-        self.vc = settings.vc
+        self.voice = settings.vc
+        self.vc = None
     
     async def start(self):
-        self.vc = await self.vc.connect()
+        self.vc = await self.voice.connect()
         return await self.next()
 
     async def end(self):
