@@ -421,12 +421,11 @@ def update_srs_wrong(discord_id, song_id):
 
         conn.commit()
 
-def list_check(player_id) -> bool:
+def list_check(player_id):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT 1
+            SELECT count(*)
             FROM user_song
             WHERE discord_id = %s AND is_active = TRUE
-            LIMIT 1
         """, (player_id,))
-        return cur.fetchone() is not None
+        return cur.fetchone()[0]

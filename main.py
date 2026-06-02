@@ -65,10 +65,10 @@ async def user_update(interaction: discord.Interaction,
     anime_ids = get_list[website](name,[watching,completed,planning,paused,dropped])
     song_ids = db.get_amq_song_ids_from_anime_ids(website, anime_ids)
     db.upsert_user_song_list(interaction.user.id, song_ids)
-    await interaction.followup.send(f"added {len(song_ids)} songs to your list", ephemeral=True)
+    await interaction.followup.send(f"your list has {db.list_check(interaction.user.id)} songs now", ephemeral=True)
 
 @amq_group.command(name="clear", description="clear your list")
-async def user_update(interaction: discord.Interaction):
+async def user_clear(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True,ephemeral= True)
     db.deactivate_songs(interaction.user.id,)
     await interaction.followup.send(f"cleared list", ephemeral=True)
@@ -116,7 +116,7 @@ async def amq_practice(interaction:discord.Interaction):
         await interaction.response.send_message("wait")
         return
     async with lock:
-        if not db.list_check(interaction.user.id):
+        if db.list_check(interaction.user.id) < 1:
             await interaction.response.send_message("No active songs found. Run `/update` to import your list first.",ephemeral=True)
             return
         if not interaction.user.voice:
