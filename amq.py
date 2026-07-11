@@ -109,6 +109,7 @@ class Game:
         prev = None
         if self.current:
             prev = self.current
+            db.update_plays(prev.id,correct)
             if not correct:
                 self.append_wrong()
         if not self.songs and self.queue.empty() and not self.refill_lock.locked():

@@ -426,3 +426,13 @@ def list_check(player_id):
             WHERE discord_id = %s AND is_active = TRUE
         """, (player_id,))
         return cur.fetchone()[0]
+    
+def update_plays(id,correct):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE song
+                SET plays = plays + 1,
+                corrects = corrects + (%s::int)
+                WHERE amq_song_id = %s
+            """, (correct,id))
