@@ -5,7 +5,7 @@ from discord.utils import get
 from collections import defaultdict
 from dotenv import load_dotenv
 from listApi import get_list
-from cache_autofill import get_anime_dict, get_artist_dict, get_song_dict
+from cache_autofill import load_anime_dict, load_artist_dict, load_song_dict
 import db
 import random
 import time
@@ -24,9 +24,9 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 lobbies = {}
 guild_locks = defaultdict(asyncio.Lock)
 amq_group = app_commands.Group(name="amq", description="play anime music quiz")
-anime_dict = get_anime_dict()
-artist_dict = get_artist_dict()
-song_dict = get_song_dict()
+anime_dict = load_anime_dict()
+artist_dict = load_artist_dict()
+song_dict = load_song_dict()
 
 @bot.event
 async def on_ready():
@@ -34,7 +34,7 @@ async def on_ready():
     for guild in GUILD_IDS:
         bot.tree.add_command(amq_group, guild=guild)
         await bot.tree.sync(guild=guild)
-    print(f"{bot.user} at your service!")
+    print(f"{bot.user} is ready to play some amq!")
 
 @amq_group.command(name="start")
 async def amq_init(interaction: discord.Interaction):
