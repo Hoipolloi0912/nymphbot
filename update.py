@@ -1,4 +1,3 @@
-
 import os
 from dotenv import load_dotenv
 import asyncio
@@ -436,6 +435,7 @@ async def interrogate():
 
 async def main():
     init_logger()
+    print("test")
     logger.info("Starting weekly update")
 
     await asyncio.to_thread(listApi.refresh_mal_token)
