@@ -235,7 +235,7 @@ def update_complete():
             cur.execute("""
                 UPDATE scheduled_jobs
                 SET last_success_at = NOW()
-                WHERE name = 'amq_update';
+                WHERE name = 'update';
             """)
     
     logger.info("Weekly db update completed successfully")
