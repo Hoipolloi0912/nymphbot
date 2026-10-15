@@ -17,7 +17,7 @@ def refresh_mal_token():
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT refresh_token
-                FROM oauth_tokens
+                FROM tokens
                 WHERE provider = 'mal';
             """)
             row = cur.fetchone()
@@ -48,7 +48,7 @@ def refresh_mal_token():
     with db.get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO oauth_tokens (
+                INSERT INTO tokens (
                     provider, access_token,
                     refresh_token, expires_at
                 )
@@ -70,7 +70,7 @@ def get_mal_token():
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT access_token, expires_at
-                FROM oauth_tokens
+                FROM tokens
                 WHERE provider = 'mal';
             """)
             row = cur.fetchone()
