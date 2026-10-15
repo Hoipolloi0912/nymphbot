@@ -229,6 +229,16 @@ def get_missing_anime_ids():
             """)
             return [row[0] for row in cur.fetchall()]
 
+def update_complete():
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE scheduled_jobs
+                SET last_success_at = NOW()
+                WHERE name = 'amq_update';
+            """)
+    
+    logger.info("Weekly db update completed successfully")
 
 def save_song_results(rows):
     if not rows:
@@ -435,7 +445,7 @@ async def main():
     del data
     await interrogate()
 
-    logger.info("Weekly db update completed successfully")
+    update_complete()
 
 if __name__ == "__main__":
     asyncio.run(main())
