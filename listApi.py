@@ -1,8 +1,87 @@
-import requests,os
+import os
+from datetime import datetime, timedelta, timezone
+import requests
 from dotenv import load_dotenv
+import db
 
 load_dotenv()
-API_TOKEN = os.getenv("MAL_TOKEN")
+
+TOKEN_URL = "https://myanimelist.net/v1/oauth2/token"
+API_URL = "https://api.myanimelist.net/v2"
+
+def refresh_mal_token():
+    client_id = os.environ["MAL_CLIENT_ID"]
+    client_secret = os.environ["MAL_CLIENT_SECRET"]
+
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT refresh_token
+                FROM oauth_tokens
+                WHERE provider = 'mal';
+            """)
+            row = cur.fetchone()
+
+    refresh_token = row[0]
+
+    response = requests.post(
+        TOKEN_URL,
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    data = response.json()
+
+    access_token = data["access_token"]
+    new_refresh_token = data.get("refresh_token") or refresh_token
+    expires_at = (
+        datetime.now(timezone.utc)
+        + timedelta(seconds=data["expires_in"])
+    )
+
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO oauth_tokens (
+                    provider, access_token,
+                    refresh_token, expires_at
+                )
+                VALUES ('mal', %s, %s, %s)
+                ON CONFLICT (provider) DO UPDATE SET
+                    access_token = EXCLUDED.access_token,
+                    refresh_token = EXCLUDED.refresh_token,
+                    expires_at = EXCLUDED.expires_at;
+            """, (
+                access_token,
+                new_refresh_token,
+                expires_at,
+            ))
+
+    return access_token
+
+def get_mal_token():
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT access_token, expires_at
+                FROM oauth_tokens
+                WHERE provider = 'mal';
+            """)
+            row = cur.fetchone()
+
+    if row:
+        access_token, expires_at = row
+
+        if expires_at > datetime.now(timezone.utc) + timedelta(days=5):
+            return access_token
+
+    return refresh_mal_token()
 
 def get_anilist(name, status_flags):
     labels = ['Watching', 'Completed', 'Planning', 'Paused', 'Dropped']
@@ -58,8 +137,9 @@ def get_anilist(name, status_flags):
 def get_mal(username, status_flags):
     status_labels = ['watching', 'completed', 'plan_to_watch', 'on_hold', 'dropped']
 
+    api_token = get_mal_token()
     headers = {
-        "Authorization": f"Bearer {API_TOKEN}"
+        "Authorization": f"Bearer {api_token}"
     }
 
     all_ids = set()
