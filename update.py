@@ -8,7 +8,6 @@ import db
 import listApi
 
 load_dotenv()
-
 LIB_URL = "https://animemusicquiz.com/libraryMasterList"
 BATCH_SIZE = 100
 MAX_ATTEMPTS = 3
@@ -17,11 +16,9 @@ RESPONSE_WAIT = 10
 
 logger = logging.getLogger("bot")
 def init_logger():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        force=True,
-    )
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                        force=True,)
 
 async def get_libraryMaster():
     timeout = aiohttp.ClientTimeout(total=300)
@@ -30,8 +27,9 @@ async def get_libraryMaster():
         async with session.get(LIB_URL) as response:
             response.raise_for_status()
             data = await response.json(content_type=None)
+            list_id = data["masterListId"]
 
-    logger.info("Master list downloaded")
+    logger.info("Master list %s downloaded", list_id)
     return data
 
 def load_names(data):
@@ -43,58 +41,37 @@ def load_names(data):
         ann_id = anime["annId"]
         names = anime.get("mainNames") or {}
 
-        animes.append((
-            ann_id,
-            names.get("JA"),
-            names.get("EN"),
-        ))
+        animes.append((ann_id,
+                       names.get("JA"),
+                       names.get("EN"),))
 
         links = anime.get("songLinks") or {}
 
         for song_type in song_types:
             for song in links.get(song_type, []):
-                songs.append((
-                    song["annSongId"],
-                    ann_id,
-                    song_type,
-                    song["songId"],
-                    bool(song.get("uploaded")),
-                    bool(song.get("rebroadcast")),
-                    bool(song.get("dub")),
-                ))
+                songs.append((song["annSongId"],
+                              ann_id,song_type,
+                              song["songId"],
+                              bool(song.get("uploaded")),
+                              bool(song.get("rebroadcast")),
+                              bool(song.get("dub")),))
 
-    artists = [
-        (
-            a["songArtistId"],
-            a["name"],
-            a.get("altNameLinks") or [],
-            [],
-        )
-        for a in data["artistMap"].values()
-    ]
+    artists = [(a["songArtistId"],
+                a["name"],
+                a.get("altNameLinks") or [],
+                [],) for a in data["artistMap"].values()]
 
-    artists += [
-        (
-            g["groupId"],
-            g["name"],
-            g.get("altNameLinks") or [],
-            g.get("artistMembers") or g.get("groupMembers") or [],
-        )
-        for g in data["groupMap"].values()
-    ]
+    artists += [(g["groupId"],
+                 g["name"],
+                 g.get("altNameLinks") or [],
+                 g.get("artistMembers") or g.get("groupMembers") or [],) for g in data["groupMap"].values()]
 
-    songz = [
-        (
-            s["songId"],
-            s["name"],
-            s.get("songArtistId") or s.get("songGroupId"),
-            s.get("category"),
-        )
-        for s in data["songMap"].values()
-    ]
+    songz = [(s["songId"],
+              s["name"],
+              s.get("songArtistId") or s.get("songGroupId"),
+              s.get("category"),) for s in data["songMap"].values()]
     
     db.upsert_master_list(animes, artists, songz, songs)
-
 
 class AMQCollector:
     def __init__(self):
@@ -144,27 +121,11 @@ class AMQCollector:
             future.set_result(data)
 
     def register(self):
-        client.register_handler(
-            client.ServerEvent.login_complete,
-            self.on_login,
-        )
-        client.register_handler(
-            client.ServerEvent.get_song_info,
-            self.on_song,
-        )
-        client.register_handler(
-            client.ServerEvent.get_anime_info,
-            self.on_anime,
-        )
+        client.register_handler(client.ServerEvent.login_complete, self.on_login)
+        client.register_handler(client.ServerEvent.get_song_info,self.on_song)
+        client.register_handler(client.ServerEvent.get_anime_info,self.on_anime)
 
-async def fetch_batches(
-    ids,
-    results,
-    pending_futures,
-    request_func,
-    save_func,
-    row_func,
-):
+async def fetch_batches(ids, results, pending_futures, request_func, save_func, row_func):
     total = len(ids)
     logger.info("Fetching %d entries", total)
 
@@ -173,142 +134,75 @@ async def fetch_batches(
     for start in range(0, total, BATCH_SIZE):
         batch = ids[start:start + BATCH_SIZE]
 
-        # Register all expected responses before sending.
-        futures = {
-            item_id: loop.create_future()
-            for item_id in batch
-            if item_id not in results
-        }
-
+        futures = {item_id: loop.create_future() for item_id in batch if item_id not in results}
         pending_futures.update(futures)
 
         try:
             for attempt in range(1, MAX_ATTEMPTS + 1):
-                missing = [
-                    item_id
-                    for item_id in batch
-                    if item_id not in results
-                ]
+                missing = [item_id for item_id in batch if item_id not in results]
 
-                if not missing:
-                    break
+                if not missing:break
 
                 for item_id in missing:
                     await request_func(item_id)
                     await asyncio.sleep(REQUEST_DELAY)
 
-                # Wait until every expected response arrives,
-                # or until the timeout expires.
-                await asyncio.wait(
-                    [
-                        pending_futures[item_id]
-                        for item_id in missing
-                    ],
-                    timeout=30,
-                    return_when=asyncio.ALL_COMPLETED,
-                )
+                await asyncio.wait([pending_futures[item_id] for item_id in missing],
+                                   timeout=30,
+                                   return_when=asyncio.ALL_COMPLETED,)
 
-                missing = [
-                    item_id
-                    for item_id in batch
-                    if item_id not in results
-                ]
+                missing = [item_id for item_id in batch if item_id not in results]
 
                 if missing:
-                    logger.warning(
-                        "Attempt %d: %d responses missing",
-                        attempt,
-                        len(missing),
-                    )
+                    logger.warning("Attempt %d: %d responses missing", attempt, len(missing))
 
-            missing = [
-                item_id
-                for item_id in batch
-                if item_id not in results
-            ]
+            missing = [item_id for item_id in batch if item_id not in results]
+            if missing: raise TimeoutError(f"Failed to receive responses for IDs: {missing}")
 
-            if missing:
-                raise TimeoutError(
-                    f"Failed to receive responses for IDs: {missing}"
-                )
-
-            # At this point, EVERY ID in the batch has a response.
-            rows = [
-                row_func(item_id, results[item_id])
-                for item_id in batch
-            ]
-
+            rows = [row_func(item_id, results[item_id]) for item_id in batch]
             await asyncio.to_thread(save_func, rows)
             saved = True
 
-            logger.info(
-                "Batch %d: %d/%d saved",
-                start // BATCH_SIZE + 1,
-                len(rows),
-                len(batch),
-            )
+            logger.info("Batch %d: %d/%d saved", start // BATCH_SIZE + 1, len(rows), len(batch))
 
         finally:
-                for item_id in batch:
-                    pending_futures.pop(item_id, None)
-
-                    future = futures.get(item_id)
-                    if future is not None and not future.done():
-                        future.cancel()
-
-                    if saved:
-                        results.pop(item_id, None)
+            for item_id in batch:
+                pending_futures.pop(item_id, None)
+                future = futures.get(item_id)
+                if future is not None and not future.done():future.cancel()
+                if saved:results.pop(item_id, None)
 
 async def load_links(collector):
     ids = await asyncio.to_thread(db.get_missing_song_ids)
 
-    await fetch_batches(
-        ids=ids,
-        results=collector.songs,
-        pending_futures=collector.pending_songs,
-        request_func=lambda item_id: client.get_song_info(item_id, True),
-        save_func=db.update_song_data,
-        row_func=lambda item_id, filename: (filename, item_id),
-    )
+    await fetch_batches(ids=ids,
+                        results=collector.songs,
+                        pending_futures=collector.pending_songs,
+                        request_func=lambda item_id: client.get_song_info(item_id, True),
+                        save_func=db.update_song_data,row_func=lambda item_id,
+                        filename: (filename, item_id))
 
 async def load_anime_info(collector):
     ids = await asyncio.to_thread(db.get_missing_anime_ids)
 
-    await fetch_batches(
-        ids=ids,
-        results=collector.animes,
-        pending_futures=collector.pending_animes,
-        request_func=client.get_anime_info,
-        save_func=db.update_anime_data,
-        row_func=lambda item_id, data: (
-            data.get("aniListId"),
-            data.get("malId"),
-            data.get("kitsuId"),
-            data.get("genres"),
-            data.get("tags"),
-            item_id,
-        ),
-    )
+    await fetch_batches(ids=ids,
+                        results=collector.animes,
+                        pending_futures=collector.pending_animes,
+                        request_func=client.get_anime_info,
+                        save_func=db.update_anime_data,
+                        row_func=lambda item_id,
+                        data: (data.get("aniListId"), data.get("malId"), data.get("kitsuId"), data.get("genres"), data.get("tags"), item_id))
 
 async def interrogate():
     collector = AMQCollector()
     collector.register()
 
     try:
-        await asyncio.wait_for(
-            client.connect(
-                client.sio,
-                username=os.environ["AMQ_USERNAME"],
-                password=os.environ["AMQ_PASSWORD"],
-            ),
-            timeout=60,
-        )
-
-        await asyncio.wait_for(
-            collector.login_ready.wait(),
-            timeout=30,
-        )
-
+        await asyncio.wait_for(client.connect(client.sio,
+                                              username=os.environ["AMQ_USERNAME"],
+                                              password=os.environ["AMQ_PASSWORD"]),
+                               timeout=20,)
+        await asyncio.wait_for(collector.login_ready.wait(), timeout=20)
         await load_links(collector)
         await load_anime_info(collector)
 

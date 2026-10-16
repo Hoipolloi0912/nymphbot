@@ -25,6 +25,7 @@ def get_conn():
     finally:
         conn.close()
 
+#region cache dict
 def load_anime_dict():
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
@@ -52,6 +53,7 @@ def load_song_dict():
         """)
         rows = cur.fetchall()
         return {id: [s_name.strip(),a_name.strip()] for id, s_name,a_name in rows}
+#endregion
 
 def modify_user_list(discord_id,myanimelist, anilist):
     with get_conn() as conn, conn.cursor() as cur:
@@ -68,7 +70,7 @@ def update_user(discord_id):
         cur.execute("""
             SELECT mal, anilist, watching, completed, on_hold, dropped, planning
             FROM users
-            WHERE discordid = %s;
+            WHERE discord_id = %s;
         """, (discord_id,))
         row = cur.fetchone()
         if row is None: return
@@ -106,7 +108,7 @@ def update_all_users():
         except Exception as e:
             print(f"Failed to update user {discord_id}, error: {e}")
 
-
+#region amq db update
 def get_missing_song_ids():
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
@@ -117,7 +119,6 @@ def get_missing_song_ids():
             ORDER BY ann_song_id;
         """)
         return [row[0] for row in cur.fetchall()]
-
 
 def get_missing_anime_ids():
     with get_conn() as conn, conn.cursor() as cur:
@@ -131,7 +132,6 @@ def get_missing_anime_ids():
         """)
         return [row[0] for row in cur.fetchall()]
 
-
 def update_song_data(rows):
     if not rows:
         return
@@ -144,7 +144,6 @@ def update_song_data(rows):
         """, rows)
 
     print("Saved %d song links", len(rows))
-
 
 def update_anime_data(rows):
     if not rows:
@@ -218,6 +217,7 @@ def log_update():
             ON CONFLICT (name) DO UPDATE SET
                 last_success_at = EXCLUDED.last_success_at;
         """)
+#endregion
 
 def get_random_links(count):
     with get_conn() as conn, conn.cursor() as cur:
