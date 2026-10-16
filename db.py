@@ -71,29 +71,153 @@ def update_user(discord_id):
             WHERE discordid = %s;
         """, (discord_id,))
         row = cur.fetchone()
-    if row is None: return
+        if row is None: return
 
-    mal, anilist, watching, completed, on_hold, dropped, planning = row
-    preferences = [watching, completed, on_hold, dropped, planning]
-    song_ids = []
-    if mal: song_ids.extend(listApi.get_mal(mal, preferences))
-    if anilist: song_ids.extend(listApi.get_anilist(anilist, preferences))
-    
-    # Deactivate songs not in the updated list
-    cur.execute("""
-        UPDATE user_song
-        SET is_active = FALSE
-        WHERE discord_id = %s
-          AND NOT (amq_song_id = ANY(%s));
-    """, (discord_id, song_ids))
+        mal, anilist, watching, completed, on_hold, dropped, planning = row
+        preferences = [watching, completed, on_hold, dropped, planning]
+        song_ids = []
+        if mal: song_ids.extend(listApi.get_mal(mal, preferences))
+        if anilist: song_ids.extend(listApi.get_anilist(anilist, preferences))
+        
+        # Deactivate songs not in the updated list
+        cur.execute("""
+            UPDATE user_song
+            SET is_active = FALSE
+            WHERE discord_id = %s
+            AND NOT (amq_song_id = ANY(%s));
+        """, (discord_id, song_ids))
 
-    # Delete inactive songs with no reviews
-    cur.execute("""
-        DELETE FROM user_song
-        WHERE discord_id = %s
-          AND is_active = FALSE
-          AND review_count = 0;
-    """, (discord_id,))
+        # Delete inactive songs with no reviews
+        cur.execute("""
+            DELETE FROM user_song
+            WHERE discord_id = %s
+            AND is_active = FALSE
+            AND review_count = 0;
+        """, (discord_id,))
+
+def update_all_users():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT discord_id FROM users;")
+        users = cur.fetchall()
+
+    for (discord_id,) in users:
+        try:
+            update_user(discord_id)
+        except Exception:
+            print("Failed to update user %s", discord_id)
+
+
+def get_missing_song_ids():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT ann_song_id
+            FROM anison
+            WHERE link IS NULL
+              AND uploaded = TRUE
+            ORDER BY ann_song_id;
+        """)
+        return [row[0] for row in cur.fetchall()]
+
+
+def get_missing_anime_ids():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT ann_id
+            FROM anime
+            WHERE anilist_id IS NULL
+              AND mal_id IS NULL
+              AND kitsu_id IS NULL
+            ORDER BY ann_id;
+        """)
+        return [row[0] for row in cur.fetchall()]
+
+
+def update_song_data(rows):
+    if not rows:
+        return
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.executemany("""
+            UPDATE anison
+            SET link = %s
+            WHERE ann_song_id = %s;
+        """, rows)
+
+    print("Saved %d song links", len(rows))
+
+
+def update_anime_data(rows):
+    if not rows:
+        return
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.executemany("""
+            UPDATE anime
+            SET anilist_id = %s,
+                mal_id = %s,
+                kitsu_id = %s,
+                genres = %s,
+                tags = %s
+            WHERE ann_id = %s;
+        """, rows)
+
+    print.info("Saved %d anime records", len(rows))
+
+def upsert_master_list(animes, artists, songz, songs):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.executemany("""
+            INSERT INTO anime (ann_id, name_ja, name_en)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (ann_id) DO UPDATE SET
+                name_ja = EXCLUDED.name_ja,
+                name_en = EXCLUDED.name_en;
+        """, animes)
+        print("Anime: %d rows", cur.rowcount)
+
+        cur.executemany("""
+            INSERT INTO artist (id, name, alt_id, member_id)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                alt_id = EXCLUDED.alt_id,
+                member_id = EXCLUDED.member_id;
+        """, artists)
+        print("Artists: %d rows", cur.rowcount)
+
+        cur.executemany("""
+            INSERT INTO song (amq_song_id, name, artist_id, category)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (amq_song_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                artist_id = EXCLUDED.artist_id,
+                category = EXCLUDED.category;
+        """, songz)
+        print("Songs: %d rows", cur.rowcount)
+
+        cur.executemany("""
+            INSERT INTO anison (
+                ann_song_id, anime_id, type,
+                amq_song_id, uploaded, rebroad, dub
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (ann_song_id) DO UPDATE SET
+                anime_id = EXCLUDED.anime_id,
+                type = EXCLUDED.type,
+                amq_song_id = EXCLUDED.amq_song_id,
+                uploaded = EXCLUDED.uploaded,
+                rebroad = EXCLUDED.rebroad,
+                dub = EXCLUDED.dub;
+        """, songs)
+        print("Anison: %d rows", cur.rowcount)
+
+def log_update():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO scheduled_jobs (name, last_success_at)
+            VALUES ('update', NOW())
+            ON CONFLICT (name) DO UPDATE SET
+                last_success_at = EXCLUDED.last_success_at;
+        """)
 
 def get_random_links(count):
     with get_conn() as conn, conn.cursor() as cur:

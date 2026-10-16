@@ -92,53 +92,8 @@ def load_names(data):
         )
         for s in data["songMap"].values()
     ]
-
-    with db.get_conn() as con:
-        with con.cursor() as cur:
-            cur.executemany("""
-                INSERT INTO anime (ann_id, name_ja, name_en)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (ann_id) DO UPDATE SET
-                    name_ja = EXCLUDED.name_ja,
-                    name_en = EXCLUDED.name_en;
-            """, animes)
-            logger.info("Anime: %d rows", cur.rowcount)
-
-            cur.executemany("""
-                INSERT INTO artist (id, name, alt_id, member_id)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    alt_id = EXCLUDED.alt_id,
-                    member_id = EXCLUDED.member_id;
-            """, artists)
-            logger.info("Artists: %d rows", cur.rowcount)
-
-            cur.executemany("""
-                INSERT INTO song (amq_song_id, name, artist_id, category)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (amq_song_id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    artist_id = EXCLUDED.artist_id,
-                    category = EXCLUDED.category;
-            """, songz)
-            logger.info("Songs: %d rows", cur.rowcount)
-
-            cur.executemany("""
-                INSERT INTO anison (
-                    ann_song_id, anime_id, type,
-                    amq_song_id, uploaded, rebroad, dub
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (ann_song_id) DO UPDATE SET
-                    anime_id = EXCLUDED.anime_id,
-                    type = EXCLUDED.type,
-                    amq_song_id = EXCLUDED.amq_song_id,
-                    uploaded = EXCLUDED.uploaded,
-                    rebroad = EXCLUDED.rebroad,
-                    dub = EXCLUDED.dub;
-            """, songs)
-            logger.info("Anison: %d rows", cur.rowcount)
+    
+    db.upsert_master_list()
 
 
 class AMQCollector:
@@ -201,78 +156,6 @@ class AMQCollector:
             client.ServerEvent.get_anime_info,
             self.on_anime,
         )
-
-def get_missing_song_ids():
-    with db.get_conn() as con:
-        with con.cursor() as cur:
-            cur.execute("""
-                SELECT ann_song_id
-                FROM anison
-                WHERE link IS NULL
-                  AND uploaded = TRUE
-                ORDER BY ann_song_id;
-            """)
-            return [row[0] for row in cur.fetchall()]
-
-
-def get_missing_anime_ids():
-    with db.get_conn() as con:
-        with con.cursor() as cur:
-            cur.execute("""
-                SELECT ann_id
-                FROM anime
-                WHERE anilist_id IS NULL
-                  AND mal_id IS NULL
-                  AND kitsu_id IS NULL
-                ORDER BY ann_id;
-            """)
-            return [row[0] for row in cur.fetchall()]
-
-def update_complete():
-    with db.get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE scheduled_jobs
-                SET last_success_at = NOW()
-                WHERE name = 'update';
-            """)
-    
-    logger.info("Weekly db update completed successfully")
-
-def save_song_results(rows):
-    if not rows:
-        return
-
-    with db.get_conn() as con:
-        with con.cursor() as cur:
-            cur.executemany("""
-                UPDATE anison
-                SET link = %s
-                WHERE ann_song_id = %s;
-            """, rows)
-
-    logger.info("Saved %d song links", len(rows))
-
-
-def save_anime_results(rows):
-    if not rows:
-        return
-
-    with db.get_conn() as con:
-        with con.cursor() as cur:
-            cur.executemany("""
-                UPDATE anime
-                SET
-                    anilist_id = %s,
-                    mal_id = %s,
-                    kitsu_id = %s,
-                    genres = %s,
-                    tags = %s
-                WHERE ann_id = %s;
-            """, rows)
-
-    logger.info("Saved %d anime records", len(rows))
-
 
 async def fetch_batches(
     ids,
@@ -377,26 +260,26 @@ async def fetch_batches(
                         results.pop(item_id, None)
 
 async def load_links(collector):
-    ids = await asyncio.to_thread(get_missing_song_ids)
+    ids = await asyncio.to_thread(db.get_missing_song_ids)
 
     await fetch_batches(
         ids=ids,
         results=collector.songs,
         pending_futures=collector.pending_songs,
         request_func=lambda item_id: client.get_song_info(item_id, True),
-        save_func=save_song_results,
+        save_func=db.update_song_data,
         row_func=lambda item_id, filename: (filename, item_id),
     )
 
 async def load_anime_info(collector):
-    ids = await asyncio.to_thread(get_missing_anime_ids)
+    ids = await asyncio.to_thread(db.get_missing_anime_ids)
 
     await fetch_batches(
         ids=ids,
         results=collector.animes,
         pending_futures=collector.pending_animes,
         request_func=client.get_anime_info,
-        save_func=save_anime_results,
+        save_func=db.update_anime_data,
         row_func=lambda item_id, data: (
             data.get("aniListId"),
             data.get("malId"),
@@ -438,14 +321,20 @@ async def main():
     print("test")
     logger.info("Starting weekly update")
 
+    #refresh api token
     await asyncio.to_thread(listApi.refresh_mal_token)
 
+    #update amq database
     data = await get_libraryMaster()
     await asyncio.to_thread(load_names, data)
     del data
     await interrogate()
 
-    update_complete()
+    #update user lists
+    db.update_all_users()
+
+    db.log_update()
+    logger.info("Weekly db update completed successfully")
 
 if __name__ == "__main__":
     asyncio.run(main())
