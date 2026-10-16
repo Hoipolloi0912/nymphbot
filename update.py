@@ -93,7 +93,7 @@ def load_names(data):
         for s in data["songMap"].values()
     ]
     
-    db.upsert_master_list()
+    db.upsert_master_list(animes, artists, songz, songs)
 
 
 class AMQCollector:
