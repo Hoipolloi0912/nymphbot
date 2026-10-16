@@ -59,10 +59,10 @@ def load_song_dict():
 def modify_user_list(discord_id,myanimelist, anilist):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO users (discord_id, myanimelist, anilist)
+            INSERT INTO users (discord_id, mal, anilist)
             VALUES (%s, %s, %s)
             ON CONFLICT (discord_id) DO UPDATE SET
-                myanimelist = EXCLUDED.myanimelist,
+                mal = EXCLUDED.mal,
                 anilist = EXCLUDED.anilist;
         """, (discord_id, myanimelist, anilist))
 
