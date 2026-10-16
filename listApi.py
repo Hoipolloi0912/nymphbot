@@ -171,5 +171,3 @@ def get_mal(username, status_flags):
                 break
 
     return list(all_ids)
-
-get_list = {"anilist":get_anilist,"mal":get_mal}

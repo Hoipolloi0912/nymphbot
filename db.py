@@ -1,13 +1,21 @@
 import psycopg
+import time
 import os
+import listApi
 from contextlib import contextmanager
-
-MAX_LEARNING = 12
 
 @contextmanager
 def get_conn():
-    DSN = os.getenv("DB_URL")
-    conn = psycopg.connect(DSN)
+    dsn = os.getenv("DB_URL")
+    conn = None
+    for attempt in range(6):#give time to waake if db is asleep
+        try:
+            conn = psycopg.connect(dsn,connect_timeout=10)
+            break
+        except psycopg.OperationalError:
+            if attempt == 5:
+                raise
+            time.sleep(1)
     try:
         yield conn
         conn.commit()
@@ -17,51 +25,89 @@ def get_conn():
     finally:
         conn.close()
 
+def load_anime_dict():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT ann_id, name_en, name_ja
+            FROM anime
+            WHERE name_en IS NOT NULL OR name_ja IS NOT NULL;
+        """)
+        rows = cur.fetchall()
+        return {id:[name_en.strip() if name_en else None,name_ja.strip() if name_ja else None] for id, name_en, name_ja in rows}
+
+def load_artist_dict():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, name
+            FROM artist;
+        """)
+        rows = cur.fetchall()
+        return {id: name.strip() for id, name in rows}
+
+def load_song_dict():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT s.amq_song_id, s.name, a.name
+            FROM song s join artist a on s.artist_id = a.id;
+        """)
+        rows = cur.fetchall()
+        return {id: [s_name.strip(),a_name.strip()] for id, s_name,a_name in rows}
+
+def modify_user_list(discord_id,myanimelist, anilist):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO users (discordid, myanimelist, anilist)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (discordid) DO UPDATE SET
+                myanimelist = EXCLUDED.myanimelist,
+                anilist = EXCLUDED.anilist;
+        """, (discord_id, myanimelist, anilist))
+
+def update_user(discord_id):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT mal, anilist, watching, completed, on_hold, dropped, planning
+            FROM users
+            WHERE discordid = %s;
+        """, (discord_id,))
+        row = cur.fetchone()
+    if row is None: return
+
+    mal, anilist, watching, completed, on_hold, dropped, planning = row
+    preferences = [watching, completed, on_hold, dropped, planning]
+    song_ids = []
+    if mal: song_ids.extend(listApi.get_mal(mal, preferences))
+    if anilist: song_ids.extend(listApi.get_anilist(anilist, preferences))
+    
+    # Deactivate songs not in the updated list
+    cur.execute("""
+        UPDATE user_song
+        SET is_active = FALSE
+        WHERE discord_id = %s
+          AND NOT (amq_song_id = ANY(%s));
+    """, (discord_id, song_ids))
+
+    # Delete inactive songs with no reviews
+    cur.execute("""
+        DELETE FROM user_song
+        WHERE discord_id = %s
+          AND is_active = FALSE
+          AND review_count = 0;
+    """, (discord_id,))
+
 def get_random_links(count):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
             select link from anison order by random() limit %s
         """, (count,))
-        return [row[0] for row in cur.fetchall()]
-
-def deactivate_songs(discord_id: int):
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("""
-            DELETE FROM user_song
-            WHERE discord_id = %s
-            AND total_reviews = 0
-        """, (discord_id,))
-        cur.execute("""
-            UPDATE user_song
-            SET is_active = FALSE
-            WHERE discord_id = %s
-        """, (discord_id,))        
+        return [row[0] for row in cur.fetchall()]    
     
 def upsert_user_song_list(discord_id: int, song_ids: list[int]):
     with get_conn() as conn, conn.cursor() as cur:
-        #add user
-        cur.execute("""
-            INSERT INTO users (discord_id)
-            VALUES (%s)
-            ON CONFLICT (discord_id)
-            DO UPDATE SET
-                date_updated = NOW();
-        """, (discord_id,))
-        #fetch current round
-        cur.execute("""
-            SELECT current_round
-            FROM users
-            WHERE discord_id = %s
-        """, (discord_id,))
-        row = cur.fetchone()
-        current_round = row[0] if row else 0
-        #add songs
         cur.execute("""
             INSERT INTO user_song (
                 discord_id,
                 amq_song_id,
-                last_review_round,
-                next_review_round,
                 is_active
             )
             SELECT
@@ -77,7 +123,7 @@ def upsert_user_song_list(discord_id: int, song_ids: list[int]):
             DO UPDATE SET
                 is_active = TRUE
             WHERE user_song.is_active = FALSE
-        """, (discord_id, current_round, current_round, song_ids))
+        """, (discord_id, song_ids))
 
 def get_ann_song_ids_from_anime_ids(website: str, anime_ids: list[int]) -> list[int]:
     if website not in ("mal", "anilist","ann"):

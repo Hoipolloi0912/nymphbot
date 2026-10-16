@@ -5,7 +5,6 @@ from discord.utils import get
 from collections import defaultdict
 from dotenv import load_dotenv
 from listApi import get_list
-from cache_autofill import load_anime_dict, load_artist_dict, load_song_dict
 import db
 import random
 import time
@@ -24,9 +23,9 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 lobbies = {}
 guild_locks = defaultdict(asyncio.Lock)
 amq_group = app_commands.Group(name="amq", description="play anime music quiz")
-anime_dict = load_anime_dict()
-artist_dict = load_artist_dict()
-song_dict = load_song_dict()
+anime_dict = db.load_anime_dict()
+artist_dict = db.load_artist_dict()
+song_dict = db.load_song_dict()
 
 @bot.event
 async def on_ready():
@@ -49,22 +48,22 @@ async def amq_init(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed,view=view)
     lobbies[interaction.guild.id].message = await interaction.original_response()
 
-@amq_group.command(name="update", description="update user's anime list")
-@app_commands.describe(name="list username")
-@app_commands.choices(website=[app_commands.Choice(name="anilist",value="anilist"),
-                               app_commands.Choice(name="myanimelist",value="mal")])
-async def user_update(interaction: discord.Interaction,
-                      name: str,
-                      website: str,
+@amq_group.command(name="anime-list", description="set your anime list")
+async def modify_user_list(interaction: discord.Interaction,
+                      myanimelist: str = None,
+                      anilist: str = None,
                       watching: bool = True,
                       completed: bool = True,
                       planning: bool = False,
                       paused: bool = False,
                       dropped: bool = False):
     await interaction.response.defer(thinking=True,ephemeral= True)
-    anime_ids = get_list[website](name,[watching,completed,planning,paused,dropped])
-    song_ids = db.get_amq_song_ids_from_anime_ids(website, anime_ids)
-    db.upsert_user_song_list(interaction.user.id, song_ids)
+    db.modify_user_list(interaction.user.id,myanimelist, anilist)
+    db.update_user(interaction.user.id)
+    #anime_ids = get_list[website](name)
+    #song_ids = db.get_amq_song_ids_from_anime_ids(website, anime_ids)
+    #db.upsert_user_song_list(interaction.user.id, song_ids)
+    update()
     await interaction.followup.send(f"your list has {db.list_check(interaction.user.id)} songs now", ephemeral=True)
 
 @amq_group.command(name="clear", description="clear your list")
