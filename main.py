@@ -59,7 +59,7 @@ async def modify_user_list(interaction: discord.Interaction,
     await interaction.response.defer(thinking=True,ephemeral= True)
     db.modify_user_list(interaction.user.id,myanimelist, anilist)
     db.update_user(interaction.user.id)
-    await interaction.followup.send(f"your list has {db.list_check(interaction.user.id)} songs now", ephemeral=True)
+    await interaction.followup.send(f"your list has {db.list_check(interaction.user.id)} songs now")
 
 @amq_group.command(name="clear", description="clear your list")
 async def user_clear(interaction: discord.Interaction):

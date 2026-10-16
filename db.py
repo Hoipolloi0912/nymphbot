@@ -55,6 +55,7 @@ def load_song_dict():
         return {id: [s_name.strip(),a_name.strip()] for id, s_name,a_name in rows}
 #endregion
 
+#region user update
 def modify_user_list(discord_id,myanimelist, anilist):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
@@ -97,6 +98,26 @@ def update_user(discord_id):
             AND review_count = 0;
         """, (discord_id,))
 
+        # add new entries
+        cur.execute("""
+            INSERT INTO user_song (
+                discord_id,
+                amq_song_id,
+                is_active
+            )
+            SELECT
+                %s,
+                t.amq_song_id,
+                TRUE
+            FROM (
+                SELECT DISTINCT unnest(%s::BIGINT[]) AS amq_song_id
+            ) t
+            ON CONFLICT (discord_id, amq_song_id)
+            DO UPDATE SET
+                is_active = TRUE
+            WHERE user_song.is_active = FALSE;
+        """, (discord_id, song_ids))
+
 def update_all_users():
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("SELECT discord_id FROM users;")
@@ -107,6 +128,7 @@ def update_all_users():
             update_user(discord_id)
         except Exception as e:
             print(f"Failed to update user {discord_id}, error: {e}")
+#endregion
 
 #region amq db update
 def get_missing_song_ids():
@@ -226,29 +248,6 @@ def get_random_links(count):
         """, (count,))
         return [row[0] for row in cur.fetchall()]    
     
-def upsert_user_song_list(discord_id: int, song_ids: list[int]):
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO user_song (
-                discord_id,
-                amq_song_id,
-                is_active
-            )
-            SELECT
-                %s,
-                t.amq_song_id,
-                %s,
-                %s,
-                TRUE
-            FROM (
-                SELECT DISTINCT unnest(%s::BIGINT[]) AS amq_song_id
-            ) t
-            ON CONFLICT (discord_id, amq_song_id)
-            DO UPDATE SET
-                is_active = TRUE
-            WHERE user_song.is_active = FALSE
-        """, (discord_id, song_ids))
-
 def get_ann_song_ids_from_anime_ids(website: str, anime_ids: list[int]) -> list[int]:
     if website not in ("mal", "anilist","ann"):
         raise ValueError("website must be 'mal' or 'anilist'")
