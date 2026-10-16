@@ -95,7 +95,7 @@ def update_user(discord_id):
             DELETE FROM user_song
             WHERE discord_id = %s
             AND is_active = FALSE
-            AND review_count = 0;
+            AND total_reviews = 0;
         """, (discord_id,))
 
         # add new entries
