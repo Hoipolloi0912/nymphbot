@@ -334,7 +334,7 @@ async def main():
     db.update_all_users()
 
     db.log_update()
-    logger.info("Weekly db update completed successfully")
+    logger.info("Weekly update completed")
 
 if __name__ == "__main__":
     asyncio.run(main())

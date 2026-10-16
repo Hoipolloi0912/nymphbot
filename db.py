@@ -103,8 +103,8 @@ def update_all_users():
     for (discord_id,) in users:
         try:
             update_user(discord_id)
-        except Exception:
-            print("Failed to update user %s", discord_id)
+        except Exception as e:
+            print(f"Failed to update user {discord_id}, error: {e}")
 
 
 def get_missing_song_ids():
@@ -161,7 +161,7 @@ def update_anime_data(rows):
             WHERE ann_id = %s;
         """, rows)
 
-    print.info("Saved %d anime records", len(rows))
+    print("Saved %d anime records", len(rows))
 
 def upsert_master_list(animes, artists, songz, songs):
     with get_conn() as conn, conn.cursor() as cur:
@@ -172,7 +172,7 @@ def upsert_master_list(animes, artists, songz, songs):
                 name_ja = EXCLUDED.name_ja,
                 name_en = EXCLUDED.name_en;
         """, animes)
-        print("Anime: %d rows", cur.rowcount)
+        print(f"Anime: {cur.rowcount} rows")
 
         cur.executemany("""
             INSERT INTO artist (id, name, alt_id, member_id)
@@ -182,7 +182,7 @@ def upsert_master_list(animes, artists, songz, songs):
                 alt_id = EXCLUDED.alt_id,
                 member_id = EXCLUDED.member_id;
         """, artists)
-        print("Artists: %d rows", cur.rowcount)
+        print(f"Artists: {cur.rowcount} rows")
 
         cur.executemany("""
             INSERT INTO song (amq_song_id, name, artist_id, category)
@@ -192,7 +192,7 @@ def upsert_master_list(animes, artists, songz, songs):
                 artist_id = EXCLUDED.artist_id,
                 category = EXCLUDED.category;
         """, songz)
-        print("Songs: %d rows", cur.rowcount)
+        print(f"Songs: {cur.rowcount} rows")
 
         cur.executemany("""
             INSERT INTO anison (
@@ -208,7 +208,7 @@ def upsert_master_list(animes, artists, songz, songs):
                 rebroad = EXCLUDED.rebroad,
                 dub = EXCLUDED.dub;
         """, songs)
-        print("Anison: %d rows", cur.rowcount)
+        print(f"Anison: {cur.rowcount} rows")
 
 def log_update():
     with get_conn() as conn, conn.cursor() as cur:
