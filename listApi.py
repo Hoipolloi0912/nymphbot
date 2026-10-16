@@ -24,17 +24,21 @@ def refresh_mal_token():
 
     refresh_token = row[0]
 
-    response = requests.post(
-        TOKEN_URL,
-        data={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-        },
-        timeout=30,
-    )
-    response.raise_for_status()
+    try:
+        response = requests.post(
+            TOKEN_URL,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+    except requests.exceptions.RequestException:
+        print("MAL token failed to refresh")
+        raise
 
     data = response.json()
 
