@@ -1,10 +1,9 @@
-import discord,asyncio,os,psycopg,random
+import discord,asyncio,os,random
 from discord.ext import commands
 from discord import app_commands
 from discord.utils import get
 from collections import defaultdict
 from dotenv import load_dotenv
-from listApi import get_list
 import db
 import random
 import time
