@@ -60,10 +60,6 @@ async def modify_user_list(interaction: discord.Interaction,
     await interaction.response.defer(thinking=True,ephemeral= True)
     db.modify_user_list(interaction.user.id,myanimelist, anilist)
     db.update_user(interaction.user.id)
-    #anime_ids = get_list[website](name)
-    #song_ids = db.get_amq_song_ids_from_anime_ids(website, anime_ids)
-    #db.upsert_user_song_list(interaction.user.id, song_ids)
-    update()
     await interaction.followup.send(f"your list has {db.list_check(interaction.user.id)} songs now", ephemeral=True)
 
 @amq_group.command(name="clear", description="clear your list")
