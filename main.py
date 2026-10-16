@@ -14,7 +14,6 @@ load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN")
 GUILD_IDS = [discord.Object(id=int(gid.strip())) for gid in os.getenv("GUILD_IDS", "").split(",")]
 HEADER = "https://naedist.animemusicquiz.com/"
-DB_URL=os.getenv('DB_URL')
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -40,7 +39,7 @@ async def amq_init(interaction: discord.Interaction):
         await interaction.response.send_message("join a voice channel", ephemeral=True)
         return
     if interaction.guild.id not in lobbies:
-        lobby = Lobby(interaction.guild, interaction.user.voice.channel, interaction.user.id)
+        lobby = Lobby(interaction.guild, interaction.user.voice.channel, interaction.channel, interaction.user.id)
         lobbies[interaction.guild.id] = lobby
     view = LobbyView(lobbies[interaction.guild.id])
     embed = lobbies[interaction.guild.id].create_embed()
@@ -57,15 +56,9 @@ async def modify_user_list(interaction: discord.Interaction,
                       paused: bool = False,
                       dropped: bool = False):
     await interaction.response.defer(thinking=True,ephemeral= True)
-    db.modify_user_list(interaction.user.id,myanimelist, anilist)
+    db.modify_user_list(interaction.user.id,myanimelist, anilist, watching, completed, paused, dropped, planning)
     db.update_user(interaction.user.id)
     await interaction.followup.send(f"your list has {db.list_check(interaction.user.id)} songs now")
-
-@amq_group.command(name="clear", description="clear your list")
-async def user_clear(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True,ephemeral= True)
-    db.deactivate_songs(interaction.user.id,)
-    await interaction.followup.send(f"cleared list", ephemeral=True)
 
 @amq_group.command(name="test",description="check current download speed")
 async def amq_test(interaction: discord.Interaction):
@@ -178,10 +171,7 @@ async def s(ctx):
         return
     async with lock:
         if ctx.guild.id in games and games[ctx.guild.id].current:
-            await ctx.send(f"{games[ctx.guild.id].count}: `{games[ctx.guild.id].get_ans()}`")
-            if not await games[ctx.guild.id].next(False):
-                await ctx.send(f"{games[ctx.guild.id].score}/{games[ctx.guild.id].count}")
-                await terminate(ctx.guild.id)
+            games[ctx.guild.id].skip()
 
 @bot.command(help="end current game")
 async def q(ctx):
@@ -204,16 +194,7 @@ async def on_message(message):
     elif message.guild.id in games:
         lock = guild_locks.setdefault(message.guild.id, asyncio.Lock())
         async with lock:
-            state = games[message.guild.id].check(message.content)
-            if state == 1:
-                await message.channel.send(f"{games[message.guild.id].count}: ✅ `{games[message.guild.id].get_ans()}`")
-                vc = get(bot.voice_clients, guild__id=message.guild.id)
-                if vc:
-                    if not await games[message.guild.id].next(True):
-                        await message.channel.send(f"{games[message.guild.id].score}/{games[message.guild.id].count}")
-                        await terminate(message.guild.id)
-            elif state ==2:
-                await message.channel.send(f"✅ {message.content}")
+            await games[message.guild.id].check(message.content)
 
 @bot.event
 async def on_command_error(ctx, error):

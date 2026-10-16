@@ -58,6 +58,7 @@ class Round:
         self.a=a
         self.alts = alts
         self.guessed = [False,False]
+        self.correct = False
 
 class Game:
     def __init__(self, settings=None, *, player_id=None, server_id=None, vc=None):
@@ -65,6 +66,7 @@ class Game:
         self.score = 0
         self.player_id = player_id
         self.server_id = settings.guild.id if settings else server_id
+        self.text_channel = settings.text_channel
         self.voice_channel = settings.vc if settings else vc
         self.voice_client = None
         self.songs = deque(db.get_amq_song_ids_from_user_ids(list(settings.players), settings.rounds)) if settings else deque()
@@ -72,44 +74,52 @@ class Game:
         self.current = None
         self.alt_names = {}
         self.ending = False
-        self.round_correct = False
         self.audio = None
+        self.duration = 30
 
     async def start(self):
         self.voice_client = await self.voice_channel.connect()
-        self.audio = AudioManager(self.voice_client, duration=30, header=HEADER, on_finished=self.next)
+        self.audio = AudioManager(self.voice_client, self.duration, header=HEADER, on_finished=self.next)
         await self.audio.start()
         return await self.next()
 
     async def next(self):
-        if self.ending:
-            return False
+        if self.current:
+            if self.current.correct:
+                await self.text_channel.send(f"{self.count}: ✅ `{self.get_ans()}`")
+            else:
+                await self.text_channel.send(f"{self.count}: `{self.get_ans()}`")
 
         self.current = None
-        self.round_correct = False
 
         while not self.ending:
             if not self.pending:
                 try:
-                    rows = await self.get_rows()
+                    queued = await self.enqueue_next()
+                    if self.ending:
+                        return False
 
-                    if rows:
-                        await asyncio.to_thread(self.prepare_alt_names, rows)
-                        self.pending.append(self.make_round(rows[0]))
-                        self.audio.enqueue(rows[0][1])
-                    else:
+                    if not queued:
                         await self.end()
                         return False
 
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
-                    print(f"Failed to queue next song: {e}")
-
-                await asyncio.to_thread(self.prepare_alt_names, rows)
-                self.pending.append(self.make_round(rows[0]))
-                self.audio.enqueue(rows[0][1])
+                    print(f"Failed to queue song: {e}")
+                    if self.ending:
+                        return False
+                    continue
 
             upcoming = self.pending.popleft()
-            success = await self.audio.play_next()
+
+            audio = self.audio
+            if self.ending or audio is None:
+                return False
+
+            success = await audio.play_next()
+            if self.ending:
+                return False
 
             if not success:
                 print(f"Skipping failed download: {upcoming.id}")
@@ -119,16 +129,31 @@ class Game:
             self.count += 1
             print(f"{self.count}: {self.get_ans()}")
 
-            rows = await self.get_rows()
-
-            if rows:
-                await asyncio.to_thread(self.prepare_alt_names, rows)
-                self.pending.append(self.make_round(rows[0]))
-                self.audio.enqueue(rows[0][1])
+            try:
+                await self.enqueue_next()
+                if self.ending:
+                    return False
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"Failed to queue next song: {e}")
 
             return True
 
         return False
+    
+    async def enqueue_next(self):
+        rows = await self.get_rows()
+        if self.ending or not rows:
+            return False
+
+        await asyncio.to_thread(self.prepare_alt_names, rows)
+        if self.ending:
+            return False
+
+        self.pending.append(self.make_round(rows[0]))
+        self.audio.enqueue(rows[0][1])
+        return True
 
     async def end(self):
         if self.ending:
@@ -158,11 +183,6 @@ class Game:
         if self.voice_client and self.voice_client.is_playing():
             self.voice_client.stop()
 
-    def finish_correct(self):
-        if self.current:
-            self.round_correct = True
-            self.skip()
-
     def get_ans(self):
         cur = self.current
         return f"[{cur.id}] {cur.sn} by {cur.a} from {cur.jp or cur.en}"
@@ -171,6 +191,9 @@ class Game:
         raise NotImplementedError
 
     def make_round(self, row):
+        raise NotImplementedError
+    
+    async def check(self, a):
         raise NotImplementedError
 
 class GameAnime(Game):
@@ -186,7 +209,7 @@ class GameAnime(Game):
     def make_round(self, row):
         return Round(*row[:6], list(self.alt_names.get(row[0], [])))
 
-    def check(self, a):
+    async def check(self, a):
         a = clean(a).lower()
         tar = self.current
 
@@ -197,10 +220,10 @@ class GameAnime(Game):
 
         if correct:
             self.score += 1
-            self.finish_correct()
+            self.current.correct = True
+            self.skip()
 
         return correct
-
 
 class GameSA(Game):
     def prepare_alt_names(self, rows):
@@ -216,8 +239,8 @@ class GameSA(Game):
     def make_round(self, row):
         return Round(*row[:6], Tree(row[6], self.alt_names))
 
-    def check(self, a):
-        a = clean(a)
+    async def check(self, a):
+        b = clean(a)
         cur = self.current
 
         if not cur:
@@ -225,12 +248,14 @@ class GameSA(Game):
 
         r = 0
 
-        if not cur.guessed[0] and a == clean(cur.sn):
+        if not cur.guessed[0] and b == clean(cur.sn):
             cur.guessed[0] = True
             r = 2
+            await self.text_channel.send(f"✅ {a}")
 
-        if cur.alts.check(a):
+        if cur.alts.check(b):
             r = 2
+            await self.text_channel.send(f"✅ {a}")
 
         if cur.alts.guessed:
             cur.guessed[1] = True
@@ -238,7 +263,8 @@ class GameSA(Game):
         if all(cur.guessed):
             self.score += 1
             r = 1
-            self.finish_correct()
+            self.current.correct = True
+            self.skip()
             
         return r
 
@@ -260,7 +286,7 @@ class GameSolo(GameSA):
             return False
 
         if self.current:
-            if self.round_correct:
+            if self.current.correct:
                 await asyncio.to_thread(db.update_srs_correct, self.player_id, self.current.id)
             else:
                 await asyncio.to_thread(db.update_srs_wrong, self.player_id, self.current.id)

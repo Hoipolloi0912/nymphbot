@@ -56,15 +56,23 @@ def load_song_dict():
 #endregion
 
 #region user update
-def modify_user_list(discord_id,myanimelist, anilist):
+def modify_user_list(discord_id, myanimelist, anilist, watching, completed, on_hold, dropped, planning):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO users (discord_id, mal, anilist)
-            VALUES (%s, %s, %s)
+            INSERT INTO users (
+                discord_id, mal, anilist,
+                watching, completed, on_hold, dropped, planning
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (discord_id) DO UPDATE SET
                 mal = EXCLUDED.mal,
-                anilist = EXCLUDED.anilist;
-        """, (discord_id, myanimelist, anilist))
+                anilist = EXCLUDED.anilist,
+                watching = EXCLUDED.watching,
+                completed = EXCLUDED.completed,
+                on_hold = EXCLUDED.on_hold,
+                dropped = EXCLUDED.dropped,
+                planning = EXCLUDED.planning;
+        """, (discord_id, myanimelist, anilist, watching, completed, on_hold, dropped, planning))
 
 def update_user(discord_id):
     with get_conn() as conn, conn.cursor() as cur:
@@ -77,10 +85,22 @@ def update_user(discord_id):
         if row is None: return
 
         mal, anilist, watching, completed, on_hold, dropped, planning = row
-        preferences = [watching, completed, on_hold, dropped, planning]
-        song_ids = []
-        if mal: song_ids.extend(listApi.get_mal(mal, preferences))
-        if anilist: song_ids.extend(listApi.get_anilist(anilist, preferences))
+        preferences = [watching, completed, planning, on_hold, dropped]
+
+        mal_ids = list(set(listApi.get_mal(mal, preferences))) if mal else []
+        anilist_ids = list(set(listApi.get_anilist(anilist, preferences))) if anilist else []
+
+        # Get valid AMQ song IDs directly from the database
+        cur.execute("""
+            SELECT DISTINCT s.amq_song_id
+            FROM anime a
+            JOIN anison an ON an.anime_id = a.ann_id
+            JOIN song s ON s.amq_song_id = an.amq_song_id
+            WHERE a.mal_id = ANY(%s::BIGINT[])
+               OR a.anilist_id = ANY(%s::BIGINT[]);
+        """, (mal_ids, anilist_ids))
+
+        song_ids = [row[0] for row in cur.fetchall()]
         
         # Deactivate songs not in the updated list
         cur.execute("""
@@ -357,6 +377,7 @@ def fetch_from_amq_song_id(amq_song_ids):
             JOIN artist c ON b.artist_id = c.id
             JOIN anime d ON a.anime_id = d.ann_id
             WHERE a.amq_song_id IN ({placeholders})
+                AND a.link IS NOT NULL
             ORDER BY a.amq_song_id, RANDOM();
         """, amq_song_ids)
         return cur.fetchall()

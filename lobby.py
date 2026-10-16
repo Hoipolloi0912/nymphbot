@@ -10,9 +10,10 @@ async def terminate(guild_id):
         del games[guild_id]
 
 class Lobby:
-    def __init__(self,guild,vc,host_id):
+    def __init__(self,guild,vc,text_channel,host_id):
         self.guild = guild
         self.vc = vc
+        self.text_channel = text_channel
         self.players = {host_id}
         self.mode = 0
         self.rounds = 20

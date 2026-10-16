@@ -3,6 +3,7 @@ import random
 import asyncio
 import aiohttp
 import discord
+import subprocess
 
 class AudioManager:
     def __init__(self, voice, duration, header, on_finished):
@@ -31,9 +32,20 @@ class AudioManager:
     def enqueue(self, url):
         self.urls.put_nowait(url)
 
+    async def run_ffmpeg(self, cmd, data):
+        def run():
+            result = subprocess.run(cmd, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode != 0: raise RuntimeError(result.stderr.decode(errors="replace"))
+            return result.stdout
+        return await asyncio.to_thread(run)
+
     async def _worker(self):
         while True:
             url = await self.urls.get()
+            if not url:
+                print("Skipping audio source: missing link")
+                await self.ready.put(None)
+                continue
 
             try:
                 audio = None
@@ -53,8 +65,6 @@ class AudioManager:
                         print(f"audio source failed ({attempt + 1}/3) for {url}: {e}")
                         if attempt < 2:
                             await asyncio.sleep(1)
-
-                if audio is None:print(f"skipping audio: {url}")
 
                 await self.ready.put(audio)
 
@@ -78,47 +88,18 @@ class AudioManager:
             return await resp.read()
 
     async def probe(self, data):
-        proc = await asyncio.create_subprocess_exec("ffprobe", "-v", "error", "-show_entries", "format=duration",
-                                                    "-of", "default=noprint_wrappers=1:nokey=1", "-i", "pipe:0",
-                                                    stdin=asyncio.subprocess.PIPE,
-                                                    stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.PIPE)
-
-        try:
-            stdout, stderr = await proc.communicate(data)
-        except asyncio.CancelledError:
-            proc.kill()
-            await proc.communicate()
-            raise
-
-        if proc.returncode != 0:
-            raise RuntimeError(stderr.decode(errors="replace"))
-
-        duration = float(stdout.decode().strip())
-
-        if not 0 < duration < float("inf"):
-            raise ValueError("Invalid audio duration")
-
-        return duration
+        stdout = await self.run_ffmpeg(["ffmpeg", "-v", "error", "-i", "pipe:0", "-map",
+                                        "0:a:0", "-f", "null", "-", "-progress", "pipe:1"], data)
+        times = [int(line.split("=", 1)[1]) for line in stdout.decode().splitlines()
+                 if line.startswith("out_time_us=") and line.split("=", 1)[1].isdigit()]
+        if not times: raise RuntimeError("Could not determine audio duration")
+        return times[-1] / 1_000_000
 
     async def prepare(self, data, start):
-        proc = await asyncio.create_subprocess_exec("ffmpeg", "-hide_banner", "-loglevel", "error",
-                                                    "-i", "pipe:0", "-ss", str(start), "-t", str(self.duration),
-                                                    "-vn", "-c:a", "libmp3lame", "-q:a", "4", "-f", "mp3", "pipe:1",
-                                                    stdin=asyncio.subprocess.PIPE,
-                                                    stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.PIPE)
-
-        try:
-            stdout, stderr = await proc.communicate(data)
-        except asyncio.CancelledError:
-            proc.kill()
-            await proc.communicate()
-            raise
-
-        if proc.returncode != 0 or not stdout:
-            raise RuntimeError(stderr.decode(errors="replace") or "Empty audio")
-
+        stdout = await self.run_ffmpeg(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+                                        "-ss", str(start), "-t", str(self.duration), "-vn", "-c:a",
+                                        "libmp3lame", "-q:a", "4", "-f", "mp3", "pipe:1"], data)
+        if not stdout: raise RuntimeError("Empty audio")
         return io.BytesIO(stdout)
 
     async def play_next(self):
