@@ -20,14 +20,17 @@ class AudioManager:
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         self.worker = asyncio.create_task(self._worker())
 
-    def toggle_pause(self):
+    def pause(self):
+        self.voice.pause()
+
+    def resume(self):
+        self.voice.resume()
+
+    def is_paused(self):
         if not self.voice or not self.voice.is_connected():
             return False
+        return self.voice.is_paused()
 
-        if self.voice.is_paused():
-            self.voice.resume()
-        elif self.voice.is_playing():
-            self.voice.pause()
 
     def enqueue(self, url):
         self.urls.put_nowait(url)

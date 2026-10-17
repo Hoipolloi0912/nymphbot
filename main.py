@@ -33,7 +33,7 @@ async def on_ready():
         await bot.tree.sync(guild=guild)
     print(f"{bot.user} is ready to play some amq!")
 
-@amq_group.command(name="start")
+@amq_group.command(name="start", description="start a lobby")
 async def amq_init(interaction: discord.Interaction):
     if not interaction.user.voice:
         await interaction.response.send_message("join a voice channel", ephemeral=True)
@@ -153,7 +153,7 @@ async def amq_splitinfo(interaction: discord.Interaction,name: int):
             stack.append((member_id, level + 1))
     await interaction.response.send_message("\n".join(lines))
 
-@amq_group.command(name="help",description="list all available commands")
+@amq_group.command(name="help",description="list commands")
 async def amq_help(interaction):
     lines = ["**Slash Commands**"]
     for cmd in amq_group.commands:
@@ -164,7 +164,7 @@ async def amq_help(interaction):
             lines.append(f"`!{cmd.name}`   {cmd.help or 'No description'}")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-@bot.command(help="skip current song")
+@bot.command(help="skip")
 async def s(ctx):
     lock = guild_locks.setdefault(ctx.guild.id, asyncio.Lock())
     if lock.locked():
@@ -173,7 +173,16 @@ async def s(ctx):
         if ctx.guild.id in games and games[ctx.guild.id].current:
             games[ctx.guild.id].skip()
 
-@bot.command(help="end current game")
+@bot.command(help="pause")
+async def p(ctx):
+    lock = guild_locks.setdefault(ctx.guild.id, asyncio.Lock())
+    if lock.locked():
+        return
+    async with lock:
+        if ctx.guild.id in games:
+            await games[ctx.guild.id].pause()
+
+@bot.command(help="quit")
 async def q(ctx):
     lock = guild_locks.setdefault(ctx.guild.id, asyncio.Lock())
     if lock.locked():

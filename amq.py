@@ -3,6 +3,8 @@ import re
 import db
 import asyncio
 import unicodedata
+import time
+import math
 from collections import deque
 from audio import AudioManager
 
@@ -59,9 +61,10 @@ class Round:
         self.alts = alts
         self.guessed = [False,False]
         self.correct = False
+        self.timer_msg = None
 
 class Game:
-    def __init__(self, settings=None, *, player_id=None, server_id=None, vc=None):
+    def __init__(self, settings=None, *, player_id=None, server_id=None, vc=None, duration = 30):
         self.count = 0
         self.score = 0
         self.player_id = player_id
@@ -69,13 +72,15 @@ class Game:
         self.text_channel = settings.text_channel
         self.voice_channel = settings.vc if settings else vc
         self.voice_client = None
+        self.duration = duration
+
         self.songs = deque(db.get_amq_song_ids_from_user_ids(list(settings.players), settings.rounds)) if settings else deque()
         self.pending = deque()
         self.current = None
         self.alt_names = {}
         self.ending = False
         self.audio = None
-        self.duration = 30
+        self.pause_state = 0 #1 = pause after, 2 = paused
 
     async def start(self):
         self.voice_client = await self.voice_channel.connect()
@@ -85,12 +90,18 @@ class Game:
 
     async def next(self):
         if self.current:
+            await self.current.timer_msg.edit(content = f"{self.count}: ended")
             if self.current.correct:
                 await self.text_channel.send(f"{self.count}: ✅ `{self.get_ans()}`")
             else:
                 await self.text_channel.send(f"{self.count}: `{self.get_ans()}`")
 
         self.current = None
+
+        if self.pause_state == 1:
+            self.pause_state = 2
+            await self.text_channel.send("pausing")
+            return True
 
         while not self.ending:
             if not self.pending:
@@ -127,7 +138,8 @@ class Game:
 
             self.current = upcoming
             self.count += 1
-            print(f"{self.count}: {self.get_ans()}")
+            #print(f"{self.count}: {self.get_ans()}")
+            self.current.timer_msg = await self.text_channel.send(f"{self.count}: ends <t:{math.ceil(time.time() + self.duration)}:R>")
 
             try:
                 await self.enqueue_next()
@@ -161,6 +173,8 @@ class Game:
 
         self.ending = True
 
+        self.text_channel.send(f"{self.score/self.count}")
+
         if self.audio:
             self.audio.on_finished = None
             await self.audio.close()
@@ -169,6 +183,9 @@ class Game:
         if self.voice_client:
             await self.voice_client.disconnect()
             self.voice_client = None
+
+        if self.current:
+            await self.current.timer_msg.edit(content = f"{self.count}: ended")
 
         self.pending.clear()
 
@@ -183,9 +200,22 @@ class Game:
         if self.voice_client and self.voice_client.is_playing():
             self.voice_client.stop()
 
+    async def pause(self):
+        match self.pause_state:
+            case 0:
+                self.pause_state = 1
+                await self.text_channel.send("pausing after")
+            case 1:
+                self.pause_state = 0
+                await self.text_channel.send("unpaused")
+            case 2:
+                self.pause_state = 0
+                await self.text_channel.send("unpaused")
+                await self.next()
+
     def get_ans(self):
         cur = self.current
-        return f"[{cur.id}] {cur.sn} by {cur.a} from {cur.jp or cur.en}"
+        return f"{cur.sn} by {cur.a} from {cur.jp or cur.en}"
 
     def prepare_alt_names(self, rows):
         raise NotImplementedError
