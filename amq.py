@@ -83,6 +83,9 @@ class Game:
         self.pause_state = 0 #1 = pause after, 2 = paused
 
     async def start(self):
+        if not self.songs:
+            await self.text_channel.send("no songs found")
+            return False
         self.voice_client = await self.voice_channel.connect()
         self.audio = AudioManager(self.voice_client, self.duration, header=HEADER, on_finished=self.next)
         await self.audio.start()
@@ -118,9 +121,8 @@ class Game:
                     raise
                 except Exception as e:
                     print(f"Failed to queue song: {e}")
-                    if self.ending:
-                        return False
-                    continue
+                    await self.end()
+                    return False
 
             upcoming = self.pending.popleft()
 
