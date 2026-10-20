@@ -38,27 +38,37 @@ async def amq_init(interaction: discord.Interaction):
     if not interaction.user.voice:
         await interaction.response.send_message("join a voice channel", ephemeral=True)
         return
+
+    await interaction.response.defer(thinking=True)
+
+    needs_list = False
+
     if interaction.guild.id not in lobbies:
-        lobby = Lobby(interaction.guild, interaction.user.voice.channel, interaction.channel, interaction.user.id)
+        lobby, needs_list = await Lobby.create(interaction.guild, interaction.user.voice.channel, interaction.channel, interaction.user.id)
         lobbies[interaction.guild.id] = lobby
-    view = LobbyView(lobbies[interaction.guild.id])
-    embed = lobbies[interaction.guild.id].create_embed()
-    await interaction.response.send_message(embed=embed,view=view)
-    lobbies[interaction.guild.id].message = await interaction.original_response()
+    else:
+        lobby = lobbies[interaction.guild.id]
+
+    view = LobbyView(lobby)
+    embed = lobby.create_embed()
+
+    lobby.message = await interaction.followup.send(embed=embed,view=view,wait=True)
+
+    if needs_list: await interaction.followup.send("joined without anime list. you can use `/amq anime-list` to link your MAL or AniList.", ephemeral=True)
 
 @amq_group.command(name="anime-list", description="set your anime list")
 async def modify_user_list(interaction: discord.Interaction,
                       myanimelist: str = None,
                       anilist: str = None,
-                      watching: bool = True,
-                      completed: bool = True,
-                      planning: bool = False,
-                      paused: bool = False,
-                      dropped: bool = False):
+                      watching: bool = None,
+                      completed: bool = None,
+                      planning: bool = None,
+                      paused: bool = None,  
+                      dropped: bool = None):
     await interaction.response.defer(thinking=True,ephemeral= True)
     db.modify_user_list(interaction.user.id,myanimelist, anilist, watching, completed, paused, dropped, planning)
     db.update_user(interaction.user.id)
-    await interaction.followup.send(f"your list has {db.list_check(interaction.user.id)} songs now")
+    await interaction.followup.send(f"your list has been updated")
 
 @amq_group.command(name="test",description="check current download speed")
 async def amq_test(interaction: discord.Interaction):
@@ -103,9 +113,6 @@ async def amq_practice(interaction:discord.Interaction):
         await interaction.response.send_message("wait")
         return
     async with lock:
-        if db.list_check(interaction.user.id) < 1:
-            await interaction.response.send_message("No active songs found. Run `/update` to import your list first.",ephemeral=True)
-            return
         if not interaction.user.voice:
             await interaction.response.send_message("join a voice channel", ephemeral=True)
             return None

@@ -56,23 +56,48 @@ def load_song_dict():
 #endregion
 
 #region user update
-def modify_user_list(discord_id, myanimelist, anilist, watching, completed, on_hold, dropped, planning):
+def add_user(user_id):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO users (
-                discord_id, mal, anilist,
-                watching, completed, on_hold, dropped, planning
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO users (discord_id)
+            VALUES (%s)
+            ON CONFLICT (discord_id) DO NOTHING;
+        """, (user_id,))
+
+        cur.execute("""
+            SELECT mal, anilist
+            FROM users
+            WHERE discord_id = %s;
+        """, (user_id,))
+
+        mal, anilist = cur.fetchone()
+
+        return not (mal and mal.strip()) and not (anilist and anilist.strip())
+
+def modify_user_list(discord_id, myanimelist, anilist ,watching, completed, on_hold, dropped, planning):
+    fields = {"mal": myanimelist,
+              "anilist": anilist,
+              "watching": watching,
+              "completed": completed,
+              "on_hold": on_hold,
+              "dropped": dropped,
+              "planning": planning}
+
+    fields = {k: v for k, v in fields.items() if v is not None}
+
+    if not fields:return
+
+    columns = ["discord_id"] + list(fields)
+    placeholders = ", ".join(["%s"] * len(columns))
+    updates = ", ".join(f"{k} = EXCLUDED.{k}" for k in fields)
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(f"""
+            INSERT INTO users ({", ".join(columns)})
+            VALUES ({placeholders})
             ON CONFLICT (discord_id) DO UPDATE SET
-                mal = EXCLUDED.mal,
-                anilist = EXCLUDED.anilist,
-                watching = EXCLUDED.watching,
-                completed = EXCLUDED.completed,
-                on_hold = EXCLUDED.on_hold,
-                dropped = EXCLUDED.dropped,
-                planning = EXCLUDED.planning;
-        """, (discord_id, myanimelist, anilist, watching, completed, on_hold, dropped, planning))
+                {updates};
+        """, (discord_id, *fields.values()))
 
 def update_user(discord_id):
     with get_conn() as conn, conn.cursor() as cur:
@@ -90,7 +115,6 @@ def update_user(discord_id):
         mal_ids = list(set(listApi.get_mal(mal, preferences))) if mal else []
         anilist_ids = list(set(listApi.get_anilist(anilist, preferences))) if anilist else []
 
-        # Get valid AMQ song IDs directly from the database
         cur.execute("""
             SELECT DISTINCT s.amq_song_id
             FROM anime a
