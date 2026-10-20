@@ -4,6 +4,7 @@ import db
 import asyncio
 
 games = {}
+lobbies = {}
 MODES = ["Song/Artist","Anime"]
 
 async def terminate(guild_id):
@@ -57,45 +58,25 @@ class KickPlayerView(discord.ui.View):
         self.lobby = lobby
         self.lobby_view = lobby_view
 
-    @discord.ui.select(
-        cls=discord.ui.UserSelect,
-        placeholder="Select a player to kick"
-    )
-    async def select_player(
-        self,
-        interaction: discord.Interaction,
-        select: discord.ui.UserSelect
-    ):
+    @discord.ui.select(cls=discord.ui.UserSelect,
+                       placeholder="select player")
+    async def select_player(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
         if interaction.user.id != self.lobby.host_id:
-            await interaction.response.send_message(
-                "Only the lobby owner can kick players.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("only lobby owner can kick", ephemeral=True)
             return
 
         player = select.values[0]
 
         if player.id == self.lobby.host_id:
-            await interaction.response.send_message(
-                "You cannot kick yourself.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("cannot kick lobby owner", ephemeral=True)
             return
 
         if player.id not in self.lobby.players:
-            await interaction.response.send_message(
-                "That user isn't in the lobby.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("player not found", ephemeral=True)
             return
 
         self.lobby.remove_player(player.id)
-
-        await interaction.response.edit_message(
-            content=f"Kicked {player.mention} from the lobby.",
-            view=None
-        )
-
+        await interaction.response.edit_message(content=f"kicked {player.mention}",view=None)
         await self.lobby_view.update_message()
         self.stop()
 
@@ -125,11 +106,17 @@ class LobbyView(discord.ui.View):
         await interaction.response.defer()
         await self.update_message()
 
-    @discord.ui.button(label="🔄", style=discord.ButtonStyle.gray,)
-    async def toggle_mode(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.lobby.toggle_mode()
-        await interaction.response.defer()
-        await self.update_message()
+    @discord.ui.button(label="🦶", style=discord.ButtonStyle.red, row=2)
+    async def kick(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.lobby.host_id:
+            await interaction.response.send_message("only lobby owner can kick",ephemeral=True)
+            return
+
+        if len(self.lobby.players) <= 1:
+            await interaction.response.send_message("no players to kick",ephemeral=True)
+            return
+
+        await interaction.response.send_message("select player", view=KickPlayerView(self.lobby, self), ephemeral=True)
 
     @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary,row=2)
     async def start(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -143,36 +130,12 @@ class LobbyView(discord.ui.View):
         await interaction.response.send_message("game starting...")
         await self.lobby.start()
 
-    @discord.ui.button(label="🗑️", style=discord.ButtonStyle.red,row=2)
+    @discord.ui.button(label="🗑️", style=discord.ButtonStyle.red, row=2)
     async def reset(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.voice:
-            self.lobby.vc = interaction.user.voice.channel
-        self.lobby.players = {interaction.user.id}
-        self.lobby.mode = 0
         await interaction.response.defer()
-        await self.update_message()
-
-    @discord.ui.button(label="Kick", style=discord.ButtonStyle.red, row=2)
-    async def kick(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.lobby.host_id:
-            await interaction.response.send_message(
-                "Only the lobby owner can kick players.",
-                ephemeral=True
-            )
-            return
-
-        if len(self.lobby.players) <= 1:
-            await interaction.response.send_message(
-                "There are no players to kick.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message(
-            "Select a player to kick:",
-            view=KickPlayerView(self.lobby, self),
-            ephemeral=True
-        )
+        await self.lobby.message.delete()
+        lobbies.pop(self.lobby.guild.id, None)
+        self.stop()
 
 class ListReminderView(discord.ui.View):
     def __init__(self, user_id):

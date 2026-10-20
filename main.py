@@ -18,7 +18,6 @@ HEADER = "https://naedist.animemusicquiz.com/"
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
-lobbies = {}
 guild_locks = defaultdict(asyncio.Lock)
 amq_group = app_commands.Group(name="amq", description="play anime music quiz")
 anime_dict = db.load_anime_dict()
