@@ -113,7 +113,8 @@ class LobbyView(discord.ui.View):
         needs_list = await self.lobby.add_player(interaction.user.id)
 
         if needs_list:
-            await interaction.response.send_message("joined without anime list. you can use `/amq anime-list` to link your MAL or AniList.", ephemeral=True)
+            await interaction.response.send_message("joined without anime list. you can use `/amq anime-list` to link your MAL or AniList.",
+                                                    ephemeral=True, view=ListReminderView(interaction.user.id))
         else:
             await interaction.response.defer()
         await self.update_message()
@@ -172,3 +173,28 @@ class LobbyView(discord.ui.View):
             view=KickPlayerView(self.lobby, self),
             ephemeral=True
         )
+
+class ListReminderView(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+
+    @discord.ui.button(
+        label="Don't show again",
+        style=discord.ButtonStyle.secondary
+    )
+    async def disable(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This reminder isn't for you.",
+                ephemeral=True
+            )
+            return
+
+        await asyncio.to_thread(db.mute_tips, self.user_id)
+
+        await interaction.response.edit_message(
+            content="You won't see this reminder again.",
+            view=None
+        )
+        self.stop()

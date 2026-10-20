@@ -65,14 +65,22 @@ def add_user(user_id):
         """, (user_id,))
 
         cur.execute("""
-            SELECT mal, anilist
+            SELECT mal, anilist, mute_tips
             FROM users
             WHERE discord_id = %s;
         """, (user_id,))
 
-        mal, anilist = cur.fetchone()
+        mal, anilist, hide_reminder = cur.fetchone()
 
-        return not (mal and mal.strip()) and not (anilist and anilist.strip())
+        return (not hide_reminder and not (mal or "").strip() and not (anilist or "").strip())
+
+def mute_tips(user_id):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            UPDATE users
+            SET mute_tips = TRUE
+            WHERE discord_id = %s;
+        """, (user_id,))
 
 def modify_user_list(discord_id, myanimelist, anilist ,watching, completed, on_hold, dropped, planning):
     fields = {"mal": myanimelist,
