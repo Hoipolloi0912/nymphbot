@@ -56,6 +56,9 @@ async def amq_init(interaction: discord.Interaction):
 
     if needs_list: await interaction.followup.send("joined without anime list. you can use `/amq anime-list` to link your MAL or AniList.", ephemeral=True)
 
+
+@app_commands.describe(myanimelist="link your username or use '-' to remove",
+                       anilist="link your username or use '-' to remove")
 @amq_group.command(name="anime-list", description="set your anime list")
 async def modify_user_list(interaction: discord.Interaction,
                       myanimelist: str = None,
@@ -66,6 +69,8 @@ async def modify_user_list(interaction: discord.Interaction,
                       paused: bool = None,  
                       dropped: bool = None):
     await interaction.response.defer(thinking=True,ephemeral= True)
+    if myanimelist == "-":myanimelist = ""
+    if anilist == "-":anilist = ""
     db.modify_user_list(interaction.user.id,myanimelist, anilist, watching, completed, paused, dropped, planning)
     db.update_user(interaction.user.id)
     await interaction.followup.send(f"your list has been updated")
